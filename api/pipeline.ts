@@ -7,7 +7,6 @@ import { VideoGenerator } from '../modules/VideoGenerator';
 import { UploaderScheduler } from '../modules/UploaderScheduler';
 
 // Backend logic to handle requests
-// In a Vercel environment, this exports a handler function
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
@@ -44,23 +43,18 @@ export default async function handler(req: any, res: any) {
         break;
 
       case 'video':
-        // Note: Video Generation is heavy. Ensure timeout settings on Vercel are high (e.g. 60s+)
-        // or use async queues in a real production environment.
         const videoGen = new VideoGenerator();
         result = await videoGen.execute(input);
-        
-        // Convert Blob URL (which doesn't work cross-server) to Base64 or keep as is if the module handles it.
-        // The current VideoGenerator returns a Blob URL which is client-side specific. 
-        // We need to adjust the Logic or assume the module has been updated to return a Data URI.
-        // *Correction*: The service `generateVideo` fetches bytes. 
-        // In a Node environment, `URL.createObjectURL` might not be available or valid for the client.
-        // We will assume the service returns a Data URI (base64) for this full-stack impl.
         break;
 
       case 'upload':
         const uploader = new UploaderScheduler();
-        // Here we would inject the server-side OAuth credentials
-        console.log("Server: Injecting OAuth Credentials for Upload...");
+        // input should now contain { video_asset, metadata, schedule, authCredentials }
+        if (input.authCredentials) {
+            console.log("Server: Using User-Provided OAuth Credentials for Upload.");
+        } else {
+            console.log("Server: No OAuth Credentials provided, defaulting to simulation.");
+        }
         result = await uploader.execute(input);
         break;
 

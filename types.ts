@@ -51,7 +51,7 @@ export interface PromptOutput {
 
 export interface VideoAsset {
   candidate_id: string;
-  video_url: string; // Blob URL for frontend display
+  video_url: string; // Blob URL (Frontend) or Data URI (Backend)
   mime_type: string;
   status: 'generated' | 'failed';
   generated_at: string;
@@ -62,10 +62,19 @@ export interface ScheduleConfig {
   privacy_status: 'private' | 'public' | 'unlisted';
 }
 
+export interface AuthCredentials {
+  access_token: string;
+  refresh_token?: string;
+  scope?: string;
+  token_type?: string;
+  expiry_date?: number;
+}
+
 export interface UploaderInput {
   video_asset: VideoAsset;
   metadata: PromptOutput;
   schedule: ScheduleConfig;
+  authCredentials?: AuthCredentials; // Added for Real YouTube API
 }
 
 export interface UploadResult {

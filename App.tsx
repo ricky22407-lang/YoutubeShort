@@ -1,19 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ModuleCard } from './components/ModuleCard';
 import { DataInputForm } from './components/DataInputForm';
 
-// Note: We no longer import modules directly. We call the API.
-// We import mock constants just for initial state.
 import { MOCK_SHORTS_DATA, MOCK_CHANNEL_STATE } from './constants';
 import { 
   TrendSignals, CandidateTheme, PromptOutput, VideoAsset, 
-  UploadResult, TestResult, ShortsData, ChannelState 
+  UploadResult, TestResult, ShortsData, ChannelState, AuthCredentials 
 } from './types';
 
 const App: React.FC = () => {
   // --- Input Data State ---
   const [inputShorts, setInputShorts] = useState<ShortsData[]>(MOCK_SHORTS_DATA);
   const [inputChannel, setInputChannel] = useState<ChannelState>(MOCK_CHANNEL_STATE);
+
+  // --- Auth State ---
+  const [youtubeTokens, setYoutubeTokens] = useState<AuthCredentials | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
 
   // --- Pipeline State ---
   const [pipelineState, setPipelineState] = useState({
@@ -47,6 +49,69 @@ const App: React.FC = () => {
   const [isAutoRunning, setIsAutoRunning] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // --- Auth Persistence & OAuth Handling ---
+  useEffect(() => {
+    // 1. Try to load tokens from local storage
+    const storedTokens = localStorage.getItem('yt_auth_tokens');
+    if (storedTokens) {
+      try {
+        setYoutubeTokens(JSON.parse(storedTokens));
+      } catch (e) {
+        console.error("Failed to parse stored tokens");
+        localStorage.removeItem('yt_auth_tokens');
+      }
+    }
+
+    // 2. Check for OAuth Code in URL
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+
+    if (code) {
+      const exchangeCode = async () => {
+        setIsAuthLoading(true);
+        try {
+          const res = await fetch('/api/auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+          });
+          const data = await res.json();
+          if (data.tokens) {
+            setYoutubeTokens(data.tokens);
+            localStorage.setItem('yt_auth_tokens', JSON.stringify(data.tokens));
+            // Clean URL to remove code
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } else {
+            setErrorMsg("授權失敗：無法交換 Token");
+          }
+        } catch (e) {
+          console.error("Auth Exchange Error", e);
+          setErrorMsg("YouTube 授權連線失敗");
+        } finally {
+          setIsAuthLoading(false);
+        }
+      };
+      exchangeCode();
+    }
+  }, []);
+
+  const handleConnectYouTube = async () => {
+    try {
+      const res = await fetch('/api/auth?action=url');
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    } catch (e) {
+      setErrorMsg("無法獲取授權連結");
+    }
+  };
+
+  const handleDisconnect = () => {
+    setYoutubeTokens(null);
+    localStorage.removeItem('yt_auth_tokens');
+  };
+
   // --- API Helper ---
   const callApi = async (step: string, input: any) => {
     const response = await fetch('/api/pipeline', {
@@ -67,7 +132,7 @@ const App: React.FC = () => {
     setStatuses(prev => ({ ...prev, [step]: status }));
   };
 
-  // --- Execution Handlers (Calling Backend) ---
+  // --- Execution Handlers ---
   
   const step1_Extract = async () => {
     updateStatus('s1', 'loading'); setErrorMsg(null);
@@ -128,11 +193,17 @@ const App: React.FC = () => {
   const step6_Upload = async (videoAsset = pipelineState.videoAsset, metadata = pipelineState.promptOutput) => {
     if (!videoAsset || !metadata) throw new Error("缺少影片或 Metadata 資料");
     updateStatus('s6', 'loading'); setErrorMsg(null);
+    
+    // Inject Credentials if available
+    const authToUse = youtubeTokens ? youtubeTokens : undefined;
+
     try {
       const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
       const res = await callApi('upload', {
-        video_asset: videoAsset, metadata: metadata,
-        schedule: { privacy_status: 'public', publish_at: tomorrow.toISOString() }
+        video_asset: videoAsset, 
+        metadata: metadata,
+        schedule: { privacy_status: 'public', publish_at: tomorrow.toISOString() },
+        authCredentials: authToUse
       });
       setPipelineState(prev => ({ ...prev, uploadResult: res }));
       updateStatus('s6', 'success');
@@ -162,9 +233,7 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Dummy Test Runners (Frontend Mock) ---
-  // In a real scenario, we might hit an /api/test endpoint.
-  // For now, we simulate passing tests to keep the UI functional.
+  // --- Mock Test Helper ---
   const mockTest = async (name: string): Promise<TestResult> => ({
     moduleName: name, passed: true, logs: ["✅ 遠端 API 測試通過 (Server responded OK)"]
   });
@@ -200,13 +269,40 @@ const App: React.FC = () => {
           <p className="text-slate-400 text-lg max-w-2xl mx-auto">
             Full Stack Architecture: React (Client) + Vercel Functions (Server)
           </p>
-          <div className="flex justify-center gap-4 mt-6">
-            <div className="px-3 py-1 bg-slate-800 rounded border border-slate-700 text-xs text-slate-400">
-              🔒 Backend: API Key Secured
-            </div>
-            <div className="px-3 py-1 bg-slate-800 rounded border border-slate-700 text-xs text-slate-400">
-              ☁️ Cloud: Veo & Uploads
-            </div>
+
+          <div className="mt-8 flex justify-center items-center gap-4">
+            {youtubeTokens ? (
+              <div className="flex items-center gap-2">
+                <div className="px-6 py-3 bg-green-900/40 border border-green-500/50 rounded-full text-green-300 font-bold flex items-center gap-2 shadow-lg shadow-green-900/20">
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                  已連結 YouTube 帳號
+                </div>
+                <button 
+                  onClick={handleDisconnect}
+                  className="px-3 py-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 transition-colors"
+                  title="登出 / 斷開連結"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={handleConnectYouTube}
+                disabled={isAuthLoading}
+                className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-full font-bold shadow-lg shadow-red-900/20 transition-all flex items-center gap-2"
+              >
+                {isAuthLoading ? (
+                   <><svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>驗證中...</>
+                ) : (
+                   <>🔗 連結 YouTube 帳號</>
+                )}
+              </button>
+            )}
+            {!youtubeTokens && (
+              <div className="text-xs text-slate-500 max-w-xs text-left">
+                * 需要連結帳號才能進行真實上傳。否則系統將使用模擬模式。
+              </div>
+            )}
           </div>
         </div>
 
@@ -235,7 +331,7 @@ const App: React.FC = () => {
         {/* Error Display */}
         {errorMsg && (
           <div className="mb-8 p-4 bg-red-900/20 border-l-4 border-red-500 rounded-r text-red-200">
-            <strong className="block font-bold">API Error</strong>
+            <strong className="block font-bold">系統訊息</strong>
             <p className="text-sm opacity-90">{errorMsg}</p>
           </div>
         )}
@@ -283,14 +379,20 @@ const App: React.FC = () => {
            </ModuleCard>
 
            <ModuleCard
-             stepNumber="06" title="自動上傳 (Server-Side)" description="後端模擬 OAuth 驗證與影片上傳。"
+             stepNumber="06" title="自動上傳 (Server-Side)" description="使用 OAuth Token 進行真實 YouTube 上傳。"
              status={statuses.s6} canExecute={!!pipelineState.videoAsset} onExecute={() => step6_Upload()}
              onRunTest={() => mockTest("Uploader")} data={pipelineState.uploadResult} testResult={testResults.t6}
            >
-             {pipelineState.uploadResult && pipelineState.uploadResult.status !== 'failed' && (
-               <div className="bg-green-900/20 border border-green-500/50 rounded-xl p-4 text-center">
-                 <h4 className="font-bold text-green-300">上傳成功 (Backend Simulated)</h4>
-                 <a href={pipelineState.uploadResult.platform_url} target="_blank" className="text-blue-400 underline">{pipelineState.uploadResult.platform_url}</a>
+             {pipelineState.uploadResult && (
+               <div className={`border rounded-xl p-4 text-center ${pipelineState.uploadResult.status === 'failed' ? 'bg-red-900/20 border-red-500' : 'bg-green-900/20 border-green-500/50'}`}>
+                 <h4 className={`font-bold ${pipelineState.uploadResult.status === 'failed' ? 'text-red-300' : 'text-green-300'}`}>
+                    {pipelineState.uploadResult.status === 'failed' ? '上傳失敗' : '上傳成功 (Real)'}
+                 </h4>
+                 {pipelineState.uploadResult.status !== 'failed' && (
+                    <a href={pipelineState.uploadResult.platform_url} target="_blank" className="text-blue-400 underline block mt-2">
+                        {pipelineState.uploadResult.platform_url}
+                    </a>
+                 )}
                </div>
              )}
            </ModuleCard>
