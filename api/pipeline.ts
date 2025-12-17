@@ -8,9 +8,8 @@ import { UploaderScheduler } from '../modules/UploaderScheduler';
 import { ChannelConfig, PipelineResult, ShortsData } from '../types';
 
 // Vercel Serverless Config
-// Attempt to increase timeout to 60s (Max for Hobby/Pro limits apply)
 export const config = {
-  maxDuration: 60, 
+  maxDuration: 60, // Try to extend execution time for Veo
 };
 
 export default async function handler(req: any, res: any) {
@@ -22,62 +21,63 @@ export default async function handler(req: any, res: any) {
 
   log("Request Received");
 
-  // 1. Method Validation
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
-  }
-
-  // 2. Environment Diagnostics
-  const envStatus = {
-    API_KEY: process.env.API_KEY ? "OK" : "MISSING",
-    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? "OK" : "MISSING",
-    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ? "OK" : "MISSING",
-    GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI || "MISSING"
-  };
-  console.log("Environment Diagnostics:", JSON.stringify(envStatus, null, 2));
-
-  if (!process.env.API_KEY) {
-    log("CRITICAL: API_KEY is missing from server environment.");
-    return res.status(500).json({ 
-        success: false, 
-        logs, 
-        error: 'Server Misconfiguration: API_KEY missing. Check Vercel Environment Variables.' 
-    });
-  }
-
   try {
-    // 3. Input Validation
-    const { channelConfig, forceMock } = req.body as { channelConfig: ChannelConfig, forceMock?: boolean };
+    // 1. Method Validation
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    // 2. Environment Diagnostics (Safe Check)
+    const envStatus = {
+      API_KEY: process.env.API_KEY ? "Present" : "MISSING",
+      GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID ? "Present" : "MISSING",
+      GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET ? "Present" : "MISSING",
+    };
+    log(`Env Check: ${JSON.stringify(envStatus)}`);
+
+    if (!process.env.API_KEY) {
+      throw new Error("Server Misconfiguration: API_KEY is missing.");
+    }
+
+    // 3. Body Parsing (Robust)
+    let body;
+    try {
+        body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+    } catch (e) {
+        throw new Error("Invalid JSON body received.");
+    }
+
+    const { channelConfig, forceMock } = body as { channelConfig: ChannelConfig, forceMock?: boolean };
     
     if (!channelConfig) {
         throw new Error("Invalid Input: 'channelConfig' is required.");
     }
     
-    log(`🚀 Starting Automation for Channel: ${channelConfig.name} (${channelConfig.id})`);
+    log(`🚀 Starting Automation for Channel: ${channelConfig.name}`);
 
     // --- Step 0: Trend Search (Real or Mock) ---
     const searcher = new TrendSearcher();
-    let shortsData: ShortsData[];
+    let shortsData: ShortsData[] = [];
     
     try {
-        if (forceMock) {
-            log("⚠️ Force Mock Data enabled.");
+        // Fallback Logic: If no Auth and no Server Client ID, force Mock
+        const hasAuth = channelConfig.auth || (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+        
+        if (forceMock || !hasAuth) {
+            log("⚠️ Running in Simulation Mode (Mock Data).");
             shortsData = (searcher as any).getMockData();
         } else {
-            // Safety check for TrendSearcher dependencies
-            if (!channelConfig.auth && !process.env.GOOGLE_CLIENT_ID) {
-                log("⚠️ No Auth & No Client ID. Falling back to Mock to prevent crash.");
-                shortsData = (searcher as any).getMockData();
-            } else {
-                shortsData = await searcher.execute(channelConfig);
-            }
+            shortsData = await searcher.execute(channelConfig);
         }
     } catch (e: any) {
-        log(`⚠️ Trend Search Failed: ${e.message}. Using Mock Data fallback.`);
+        log(`⚠️ Trend Search Error: ${e.message}. Falling back to Mock.`);
         shortsData = (searcher as any).getMockData();
     }
     
-    log(`✅ Trends Fetched: ${shortsData.length} items`);
+    if (!shortsData || shortsData.length === 0) {
+        throw new Error("Failed to retrieve Shorts Data.");
+    }
+    log(`✅ Trends Data Ready: ${shortsData.length} items`);
 
     // --- Step 1: Extract Signals ---
     const extractor = new TrendSignalExtractor();
@@ -111,14 +111,14 @@ export default async function handler(req: any, res: any) {
         videoAsset = await videoGen.execute(promptOutput);
         log("✅ Video Generated (Veo 3.1 9:16)");
     } catch (e: any) {
+        console.error("Video Generation Failed:", e);
         log(`⚠️ Video Generation Failed: ${e.message}`);
-        throw new Error(`Video Gen Error: ${e.message}. Possible Vercel Timeout or API limit.`);
+        throw new Error(`Veo Generation Error: ${e.message}`);
     }
 
     // --- Step 6: Upload to YouTube ---
     const uploader = new UploaderScheduler();
     
-    // Construct Uploader Input
     const uploadInput = {
         video_asset: videoAsset,
         metadata: promptOutput,
@@ -132,7 +132,7 @@ export default async function handler(req: any, res: any) {
         log(`✅ Upload Process Complete. Status: ${uploadResult.status}`);
     } catch (e: any) {
          log(`⚠️ Upload Failed: ${e.message}`);
-         // We don't throw here, we return what we have so far
+         // Return partial success so the pipeline doesn't look like a total failure
          uploadResult = { status: 'failed', platform_url: '', video_id: '', uploaded_at: new Date().toISOString() };
     }
     
@@ -151,13 +151,13 @@ export default async function handler(req: any, res: any) {
 
   } catch (error: any) {
     console.error("CRITICAL PIPELINE FAILURE:", error);
-    log(`❌ Fatal Error: ${error.message}`);
     
-    // Ensure we return 200 with error details so frontend can display logs instead of generic 500
+    // IMPORTANT: Return 200 OK with error info so Frontend ErrorBoundary/Logic can handle it.
+    // Returning 500 causes Vercel to show a generic error page which hides our logs.
     return res.status(200).json({ 
         success: false, 
-        logs, 
-        error: error.message,
+        logs: logs, 
+        error: error.message || "Unknown Server Error",
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
