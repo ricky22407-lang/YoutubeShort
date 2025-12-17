@@ -1,0 +1,27 @@
+{
+  "candidates": [
+    {
+      "id": "gen_001",
+      "subject_type": "Hydraulic Press",
+      "action_verb": "Crush",
+      "object_type": "Gummy Bear Army",
+      "structure_type": "Experiment",
+      "algorithm_signals": ["satisfying", "destruction"],
+      "rationale": "High visual impact."
+    },
+    {
+      "id": "gen_002",
+      "subject_type": "Cat",
+      "action_verb": "React",
+      "object_type": "Cucumber",
+      "structure_type": "Reaction",
+      "algorithm_signals": ["funny", "cats"],
+      "rationale": "Classic funny cat trope."
+    }
+  ],
+  "channelState": {
+    "niche": "General Entertainment / Experiments",
+    "avg_views": 100000,
+    "target_audience": "Gen Z males 18-24"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CandidateWeightEngine Input",
+  "type": "object",
+  "properties": {
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "subject_type": { "type": "string" },
+          "action_verb": { "type": "string" },
+          "object_type": { "type": "string" },
+          "structure_type": { "type": "string" },
+          "algorithm_signals": { "type": "array", "items": { "type": "string" } },
+          "rationale": { "type": "string" }
+        },
+        "required": ["id", "subject_type", "action_verb", "object_type"]
+      }
+    },
+    "channelState": {
+      "type": "object",
+      "properties": {
+        "niche": { "type": "string" },
+        "avg_views": { "type": "number" },
+        "target_audience": { "type": "string" }
+      },
+      "required": ["niche", "target_audience"]
+    }
+  },
+  "required": ["candidates", "channelState"]
+}
