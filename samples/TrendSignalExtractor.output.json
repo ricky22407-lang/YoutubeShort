@@ -1,0 +1,22 @@
+{
+  "action_verb_frequency": {
+    "crush": 1,
+    "forget": 1
+  },
+  "subject_type_frequency": {
+    "hydraulic press": 1,
+    "student": 1
+  },
+  "object_type_frequency": {
+    "diamond": 1,
+    "homework": 1
+  },
+  "structure_type_frequency": {
+    "experiment": 1,
+    "pov": 1
+  },
+  "algorithm_signal_frequency": {
+    "satisfying": 1,
+    "relatable": 1
+  }
+}

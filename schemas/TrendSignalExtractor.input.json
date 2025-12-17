@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TrendSignalExtractor Input",
+  "description": "Array of raw Shorts data to be analyzed.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Unique identifier for the video"
+      },
+      "title": {
+        "type": "string",
+        "description": "Video title"
+      },
+      "hashtags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "List of hashtags used"
+      },
+      "view_count": {
+        "type": "number",
+        "description": "Total views"
+      },
+      "region": {
+        "type": "string",
+        "description": "Target region (e.g., US, UK)"
+      },
+      "view_growth_rate": {
+        "type": "number",
+        "description": "Recent growth multiplier (e.g., 1.5x)"
+      }
+    },
+    "required": [
+      "id",
+      "title",
+      "view_count"
+    ]
+  }
+}

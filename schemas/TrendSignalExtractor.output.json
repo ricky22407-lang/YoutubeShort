@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TrendSignalExtractor Output",
+  "description": "Statistical signals extracted from the dataset.",
+  "type": "object",
+  "properties": {
+    "action_verb_frequency": {
+      "type": "object",
+      "description": "Frequency map of action verbs (e.g., crush, cut)",
+      "additionalProperties": { "type": "number" }
+    },
+    "subject_type_frequency": {
+      "type": "object",
+      "description": "Frequency map of subjects (e.g., hydraulic press, cat)",
+      "additionalProperties": { "type": "number" }
+    },
+    "object_type_frequency": {
+      "type": "object",
+      "description": "Frequency map of objects (e.g., diamond, ball)",
+      "additionalProperties": { "type": "number" }
+    },
+    "structure_type_frequency": {
+      "type": "object",
+      "description": "Frequency map of video structures (e.g., experiment, skit)",
+      "additionalProperties": { "type": "number" }
+    },
+    "algorithm_signal_frequency": {
+      "type": "object",
+      "description": "Frequency map of high-performing keywords",
+      "additionalProperties": { "type": "number" }
+    }
+  },
+  "required": [
+    "action_verb_frequency",
+    "subject_type_frequency",
+    "object_type_frequency",
+    "structure_type_frequency",
+    "algorithm_signal_frequency"
+  ]
+}

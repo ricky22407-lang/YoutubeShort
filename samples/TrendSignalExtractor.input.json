@@ -1,0 +1,18 @@
+[
+  {
+    "id": "v1",
+    "title": "I crushed a diamond with a hydraulic press!",
+    "hashtags": ["#satisfying", "#science", "#destruction"],
+    "view_count": 5000000,
+    "region": "US",
+    "view_growth_rate": 1.5
+  },
+  {
+    "id": "v2",
+    "title": "POV: You forgot your homework",
+    "hashtags": ["#relatable", "#school", "#comedy"],
+    "view_count": 2000000,
+    "region": "US",
+    "view_growth_rate": 0.8
+  }
+]
