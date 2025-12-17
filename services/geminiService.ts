@@ -1,6 +1,7 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 // Ensure API Key is present
+// Note: In Next.js/Vercel, process.env.API_KEY is available on the server side.
 const API_KEY = process.env.API_KEY || '';
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -14,7 +15,7 @@ export const generateJSON = async <T>(
   responseSchema?: any
 ): Promise<T> => {
   if (!API_KEY) {
-    throw new Error("API Key is missing. Please set process.env.API_KEY.");
+    throw new Error("API Key is missing. Please check server configuration.");
   }
 
   try {
@@ -25,7 +26,7 @@ export const generateJSON = async <T>(
         systemInstruction: systemInstruction,
         responseMimeType: "application/json",
         responseSchema: responseSchema,
-        temperature: 0.2, // Low temperature for deterministic structural output
+        temperature: 0.2, 
       },
     });
 
@@ -43,26 +44,24 @@ export const generateJSON = async <T>(
 
 export const generateVideo = async (prompt: string): Promise<string> => {
   if (!API_KEY) {
-    throw new Error("API Key is missing. Please set process.env.API_KEY.");
+    throw new Error("API Key is missing.");
   }
 
   try {
-    console.log("Starting Veo generation...");
+    console.log("Starting Veo generation (Server-Side)...");
     let operation = await ai.models.generateVideos({
       model: videoModelId,
       prompt: prompt,
       config: {
         numberOfVideos: 1,
         resolution: '720p',
-        aspectRatio: '9:16' // Shorts format
+        aspectRatio: '9:16'
       }
     });
 
-    console.log("Video operation started, polling...", operation);
-
     // Polling loop
     while (!operation.done) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Poll every 5s
+      await new Promise(resolve => setTimeout(resolve, 5000));
       operation = await ai.operations.getVideosOperation({operation: operation});
       console.log("Polling status:", operation.metadata?.state);
     }
@@ -72,14 +71,32 @@ export const generateVideo = async (prompt: string): Promise<string> => {
       throw new Error("Video generation completed but no URI returned.");
     }
 
-    // Fetch the raw MP4 bytes
+    // Fetch the raw MP4 bytes using the API Key
     const response = await fetch(`${downloadLink}&key=${API_KEY}`);
     if (!response.ok) {
       throw new Error(`Failed to download video bytes: ${response.statusText}`);
     }
 
-    const blob = await response.blob();
-    return URL.createObjectURL(blob);
+    // Convert to Base64 Data URI for frontend consumption
+    const arrayBuffer = await response.arrayBuffer();
+    
+    // Convert ArrayBuffer to Base64
+    // Safe implementation for environments where Buffer might not be globally typed (e.g. Frontend TS config)
+    let base64 = '';
+    if (typeof globalThis !== 'undefined' && (globalThis as any).Buffer) {
+        base64 = (globalThis as any).Buffer.from(arrayBuffer).toString('base64');
+    } else {
+        // Fallback using standard Web APIs
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = '';
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        base64 = btoa(binary);
+    }
+    
+    return `data:video/mp4;base64,${base64}`;
 
   } catch (error) {
     console.error("Gemini API Error (Video):", error);

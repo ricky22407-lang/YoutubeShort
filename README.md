@@ -1,20 +1,69 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# YouTube Shorts Automation System (Full Stack)
 
-# Run and deploy your AI Studio app
+This project is a modular AI system for analyzing YouTube Shorts trends and generating video candidates, scripts, and prompts. It is architected as a full-stack application using React (Frontend) and Serverless Functions (Backend).
 
-This contains everything you need to run your app locally.
+## 🚀 Features
 
-View your app in AI Studio: https://ai.studio/apps/drive/1bSHaT8x0o-NdgSaWS4c1fvt5SdvxcudP
+1.  **Trend Analysis**: Extracts statistical signals from raw Shorts data.
+2.  **Candidate Generation**: Brainstorms viral video concepts.
+3.  **Weight Engine**: Scores candidates based on channel fit.
+4.  **Prompt Composition**: Generates prompts for AI Video models.
+5.  **Video Generation**: Integrates with Google Veo (via Gemini API).
+6.  **Auto Upload**: Simulates YouTube API upload and scheduling.
 
-## Run Locally
+## 🛠️ Tech Stack
 
-**Prerequisites:**  Node.js
+*   **Frontend**: React, Tailwind CSS
+*   **Backend**: Node.js (Vercel Serverless Functions / Express)
+*   **AI**: Google GenAI SDK (Gemini 2.5, Veo)
 
+## 📦 Setup & Deployment
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### 1. Environment Variables
+
+Create a `.env` file in the root directory:
+
+```env
+# Required for AI features
+API_KEY=your_google_genai_api_key
+
+# Required for YouTube Uploads (Real implementation)
+GOOGLE_CLIENT_ID=your_oauth_client_id
+GOOGLE_CLIENT_SECRET=your_oauth_client_secret
+GOOGLE_REFRESH_TOKEN=your_refresh_token
+```
+
+### 2. Local Development
+
+1.  Install dependencies:
+    ```bash
+    npm install
+    ```
+2.  Start the development server (creates /api proxies):
+    ```bash
+    npm run dev
+    ```
+
+### 3. Deploy to Vercel
+
+1.  Push code to GitHub.
+2.  Import project into Vercel.
+3.  Add the `API_KEY` in Vercel Project Settings > Environment Variables.
+4.  Deploy.
+
+## 📂 Project Structure
+
+*   `/api`: Backend serverless functions.
+*   `/modules`: Core logic classes (executed by Backend).
+*   `/services`: External API wrappers (Gemini, YouTube).
+*   `/components`: React UI components.
+*   `/schemas`: JSON schemas for AI structured output.
+
+## ⚠️ Notes on Google Veo
+
+Video generation using the Veo model is time-intensive and requires a specific allowlisted API Key. The system implements polling to wait for video completion.
+
+---
+**Roles:**
+*   Gemini (Engineering)
+*   Grok (Product Management)
