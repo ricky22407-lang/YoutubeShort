@@ -1,0 +1,5 @@
+{
+  "name": "Shorts Automation System",
+  "description": "A modular AI system for analyzing YouTube Shorts trends and generating video candidates, scripts, and prompts.",
+  "requestFramePermissions": []
+}
