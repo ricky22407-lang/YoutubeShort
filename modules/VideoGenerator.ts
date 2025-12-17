@@ -5,12 +5,11 @@ import { generateVideo } from '../services/geminiService';
  * Phase 5: Video Generator
  * 
  * Goal: Generate a real video using the Veo model based on the optimized prompt.
- * Input: PromptOutput
- * Output: VideoAsset (Blob URL)
+ * STRICT: Must use 9:16 aspect ratio for Shorts.
  */
 export class VideoGenerator implements IModule<PromptOutput, VideoAsset> {
   name = "Video Generator";
-  description = "Generates actual MP4 video using Veo (AI Video Model).";
+  description = "Generates actual MP4 video using Veo (AI Video Model) in 9:16 format.";
 
   async execute(input: PromptOutput): Promise<VideoAsset> {
     if (!input.prompt) {
@@ -21,7 +20,10 @@ export class VideoGenerator implements IModule<PromptOutput, VideoAsset> {
     }
 
     try {
-      // Call the service to hit Veo API
+      console.log(`[VideoGenerator] Generating 9:16 video for candidate: ${input.candidate_id}`);
+      
+      // The generateVideo service is already configured, but we double check logic there.
+      // Passing prompt directly.
       const videoUrl = await generateVideo(input.prompt);
 
       return {
@@ -34,9 +36,6 @@ export class VideoGenerator implements IModule<PromptOutput, VideoAsset> {
 
     } catch (error) {
       console.error("VideoGenerator Execution Failed:", error);
-      // For demo purposes, we might want to propagate the error, 
-      // but in a real pipeline, we might return a 'failed' status object.
-      // Here we throw to let the UI handle the error state.
       throw error;
     }
   }

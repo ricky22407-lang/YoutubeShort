@@ -7,6 +7,7 @@ export interface ShortsData {
   view_count: number;
   region: string;
   view_growth_rate: number;
+  publishedAt?: string;
 }
 
 export interface TrendSignals {
@@ -25,7 +26,6 @@ export interface CandidateTheme {
   structure_type: string;
   algorithm_signals: string[];
   rationale?: string;
-  // Weight Engine Output fields
   total_score?: number;
   selected?: boolean;
   scoring_breakdown?: {
@@ -58,8 +58,10 @@ export interface VideoAsset {
 }
 
 export interface ScheduleConfig {
-  publish_at?: string; // ISO Date string for scheduled release
+  active: boolean;
+  cron_expression?: string; // e.g., "0 9 * * *"
   privacy_status: 'private' | 'public' | 'unlisted';
+  publish_at?: string;
 }
 
 export interface AuthCredentials {
@@ -70,15 +72,40 @@ export interface AuthCredentials {
   expiry_date?: number;
 }
 
+// --- Multi-Channel Configuration ---
+
+export interface ChannelConfig {
+  id: string;
+  name: string;
+  regionCode: string; // e.g., 'US', 'TW', 'JP'
+  searchKeywords: string[]; // e.g., ['AI', 'Tech', 'Coding']
+  channelState: ChannelState;
+  schedule: ScheduleConfig;
+  auth: AuthCredentials | null;
+  lastRun?: string;
+  status: 'idle' | 'running' | 'error' | 'success';
+}
+
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  channelId: string;
+  channelName: string;
+  level: 'info' | 'success' | 'error';
+  message: string;
+}
+
+// --- API Interactions ---
+
 export interface UploaderInput {
   video_asset: VideoAsset;
   metadata: PromptOutput;
   schedule: ScheduleConfig;
-  authCredentials?: AuthCredentials; // Added for Real YouTube API
+  authCredentials?: AuthCredentials;
 }
 
 export interface UploadResult {
-  platform: 'youtube';
+  platform: string;
   video_id: string;
   platform_url: string;
   status: 'uploaded' | 'scheduled' | 'failed';
@@ -86,7 +113,18 @@ export interface UploadResult {
   uploaded_at: string;
 }
 
-// Module Interfaces
+export interface PipelineInput {
+  channelConfig: ChannelConfig;
+  forceMock?: boolean; // For testing without burning quota
+}
+
+export interface PipelineResult {
+  success: boolean;
+  logs: string[];
+  videoUrl?: string;
+  uploadId?: string;
+}
+
 export interface IModule<Input, Output> {
   name: string;
   description: string;

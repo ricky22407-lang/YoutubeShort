@@ -17,6 +17,7 @@ const MOCK_INPUT: UploaderInput = {
     candidate_reference: {} as any
   },
   schedule: {
+    active: false,
     privacy_status: "public"
   }
 };
@@ -41,6 +42,7 @@ export const runUploaderTests = async (): Promise<TestResult> => {
     const scheduledInput: UploaderInput = {
       ...MOCK_INPUT,
       schedule: {
+        active: true,
         privacy_status: "private",
         publish_at: "2025-01-01T12:00:00Z"
       }

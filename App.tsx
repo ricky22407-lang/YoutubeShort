@@ -1,405 +1,349 @@
-import React, { useState, useEffect } from 'react';
-import { ModuleCard } from './components/ModuleCard';
-import { DataInputForm } from './components/DataInputForm';
-
-import { MOCK_SHORTS_DATA, MOCK_CHANNEL_STATE } from './constants';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  TrendSignals, CandidateTheme, PromptOutput, VideoAsset, 
-  UploadResult, TestResult, ShortsData, ChannelState, AuthCredentials 
+  ChannelConfig, LogEntry, ChannelState, ScheduleConfig, PipelineResult, AuthCredentials 
 } from './types';
+import { MOCK_CHANNEL_STATE } from './constants';
 
 const App: React.FC = () => {
-  // --- Input Data State ---
-  const [inputShorts, setInputShorts] = useState<ShortsData[]>(MOCK_SHORTS_DATA);
-  const [inputChannel, setInputChannel] = useState<ChannelState>(MOCK_CHANNEL_STATE);
+  // --- State ---
+  const [channels, setChannels] = useState<ChannelConfig[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'logs'>('dashboard');
 
-  // --- Auth State ---
-  const [youtubeTokens, setYoutubeTokens] = useState<AuthCredentials | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState(false);
+  // New Channel Form State
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newKeywords, setNewKeywords] = useState("AI, Tech");
+  const [newRegion, setNewRegion] = useState("US");
 
-  // --- Pipeline State ---
-  const [pipelineState, setPipelineState] = useState({
-    trendSignals: null as TrendSignals | null,
-    candidates: null as CandidateTheme[] | null,
-    scoredCandidates: null as CandidateTheme[] | null,
-    promptOutput: null as PromptOutput | null,
-    videoAsset: null as VideoAsset | null,
-    uploadResult: null as UploadResult | null,
-  });
-
-  const [statuses, setStatuses] = useState({
-    s1: 'idle' as const,
-    s2: 'idle' as const,
-    s3: 'idle' as const,
-    s4: 'idle' as const,
-    s5: 'idle' as const,
-    s6: 'idle' as const,
-  });
-
-  const [testResults, setTestResults] = useState({
-    t1: null as TestResult | null,
-    t2: null as TestResult | null,
-    t3: null as TestResult | null,
-    t4: null as TestResult | null,
-    t5: null as TestResult | null,
-    t6: null as TestResult | null,
-  });
-
-  const [globalProgress, setGlobalProgress] = useState(0);
-  const [isAutoRunning, setIsAutoRunning] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // --- Auth Persistence & OAuth Handling ---
+  // --- Persistence ---
   useEffect(() => {
-    // 1. Try to load tokens from local storage
-    const storedTokens = localStorage.getItem('yt_auth_tokens');
-    if (storedTokens) {
-      try {
-        setYoutubeTokens(JSON.parse(storedTokens));
-      } catch (e) {
-        console.error("Failed to parse stored tokens");
-        localStorage.removeItem('yt_auth_tokens');
-      }
-    }
+    const saved = localStorage.getItem('sas_channels');
+    if (saved) setChannels(JSON.parse(saved));
 
-    // 2. Check for OAuth Code in URL
+    // Handle OAuth Callback
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
+    const pendingId = localStorage.getItem('sas_pending_auth_id');
 
-    if (code) {
-      const exchangeCode = async () => {
-        setIsAuthLoading(true);
-        try {
-          const res = await fetch('/api/auth', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code })
-          });
-          const data = await res.json();
-          if (data.tokens) {
-            setYoutubeTokens(data.tokens);
-            localStorage.setItem('yt_auth_tokens', JSON.stringify(data.tokens));
-            // Clean URL to remove code
-            window.history.replaceState({}, document.title, window.location.pathname);
-          } else {
-            setErrorMsg("授權失敗：無法交換 Token");
-          }
-        } catch (e) {
-          console.error("Auth Exchange Error", e);
-          setErrorMsg("YouTube 授權連線失敗");
-        } finally {
-          setIsAuthLoading(false);
-        }
-      };
-      exchangeCode();
+    if (code && pendingId) {
+       handleAuthCallback(code, pendingId);
     }
   }, []);
 
-  const handleConnectYouTube = async () => {
+  useEffect(() => {
+    localStorage.setItem('sas_channels', JSON.stringify(channels));
+  }, [channels]);
+
+  // --- Actions ---
+
+  const addLog = (channelId: string, channelName: string, level: 'info' | 'success' | 'error', msg: string) => {
+    const entry: LogEntry = {
+      id: Date.now().toString() + Math.random(),
+      timestamp: new Date().toLocaleTimeString(),
+      channelId,
+      channelName,
+      level,
+      message: msg
+    };
+    setLogs(prev => [entry, ...prev]);
+  };
+
+  const handleAuthCallback = async (code: string, channelId: string) => {
+    window.history.replaceState({}, document.title, window.location.pathname);
+    localStorage.removeItem('sas_pending_auth_id');
+    
+    addLog(channelId, 'System', 'info', 'Exchanging OAuth Code...');
     try {
-      const res = await fetch('/api/auth?action=url');
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ code })
+      });
       const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
+      if (data.tokens) {
+        updateChannel(channelId, { auth: data.tokens });
+        addLog(channelId, 'System', 'success', 'YouTube 授權成功！');
       }
     } catch (e) {
-      setErrorMsg("無法獲取授權連結");
+      addLog(channelId, 'System', 'error', '授權失敗');
     }
   };
 
-  const handleDisconnect = () => {
-    setYoutubeTokens(null);
-    localStorage.removeItem('yt_auth_tokens');
+  const createChannel = () => {
+    const newId = Date.now().toString();
+    const newChannel: ChannelConfig = {
+      id: newId,
+      name: newChannelName || "New Channel",
+      regionCode: newRegion,
+      searchKeywords: newKeywords.split(',').map(s => s.trim()),
+      channelState: { ...MOCK_CHANNEL_STATE, niche: newKeywords },
+      schedule: { active: false, privacy_status: 'private' },
+      auth: null,
+      status: 'idle'
+    };
+    setChannels(prev => [...prev, newChannel]);
+    setIsAdding(false);
+    setNewChannelName("");
   };
 
-  // --- API Helper ---
-  const callApi = async (step: string, input: any) => {
-    const response = await fetch('/api/pipeline', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ step, input }),
-    });
+  const deleteChannel = (id: string) => {
+    setChannels(prev => prev.filter(c => c.id !== id));
+  };
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || `Server Error: ${response.status}`);
+  const updateChannel = (id: string, updates: Partial<ChannelConfig>) => {
+    setChannels(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  };
+
+  const startAuth = async (channelId: string) => {
+    localStorage.setItem('sas_pending_auth_id', channelId);
+    const res = await fetch('/api/auth?action=url');
+    const data = await res.json();
+    if (data.url) window.location.href = data.url;
+  };
+
+  const runAutomation = async (channel: ChannelConfig) => {
+    if (!channel.auth) {
+      alert("請先連結 YouTube 帳號");
+      return;
     }
 
-    return await response.json();
-  };
-
-  const updateStatus = (step: keyof typeof statuses, status: typeof statuses['s1']) => {
-    setStatuses(prev => ({ ...prev, [step]: status }));
-  };
-
-  // --- Execution Handlers ---
-  
-  const step1_Extract = async () => {
-    updateStatus('s1', 'loading'); setErrorMsg(null);
-    try {
-      const res = await callApi('trend', inputShorts);
-      setPipelineState(prev => ({ ...prev, trendSignals: res }));
-      updateStatus('s1', 'success');
-      return res;
-    } catch (e: any) { setErrorMsg(e.message); updateStatus('s1', 'error'); throw e; }
-  };
-
-  const step2_Generate = async (input = pipelineState.trendSignals) => {
-    if (!input) throw new Error("缺少趨勢訊號資料");
-    updateStatus('s2', 'loading'); setErrorMsg(null);
-    try {
-      const res = await callApi('candidate', input);
-      setPipelineState(prev => ({ ...prev, candidates: res }));
-      updateStatus('s2', 'success');
-      return res;
-    } catch (e: any) { setErrorMsg(e.message); updateStatus('s2', 'error'); throw e; }
-  };
-
-  const step3_Weight = async (input = pipelineState.candidates) => {
-    if (!input) throw new Error("缺少候選題材資料");
-    updateStatus('s3', 'loading'); setErrorMsg(null);
-    try {
-      const res = await callApi('weight', { candidates: input, channelState: inputChannel });
-      setPipelineState(prev => ({ ...prev, scoredCandidates: res }));
-      updateStatus('s3', 'success');
-      return res;
-    } catch (e: any) { setErrorMsg(e.message); updateStatus('s3', 'error'); throw e; }
-  };
-
-  const step4_Compose = async (input = pipelineState.scoredCandidates) => {
-    if (!input) throw new Error("缺少已評分題材資料");
-    updateStatus('s4', 'loading'); setErrorMsg(null);
-    try {
-      const selected = input.find(c => c.selected);
-      if (!selected) throw new Error("權重引擎未選出優勝題材");
-      const res = await callApi('prompt', selected);
-      setPipelineState(prev => ({ ...prev, promptOutput: res }));
-      updateStatus('s4', 'success');
-      return res;
-    } catch (e: any) { setErrorMsg(e.message); updateStatus('s4', 'error'); throw e; }
-  };
-
-  const step5_Video = async (input = pipelineState.promptOutput) => {
-    if (!input) throw new Error("缺少 Prompt 資料");
-    updateStatus('s5', 'loading'); setErrorMsg(null);
-    try {
-      const res = await callApi('video', input);
-      setPipelineState(prev => ({ ...prev, videoAsset: res }));
-      updateStatus('s5', 'success');
-      return res;
-    } catch (e: any) { setErrorMsg(e.message); updateStatus('s5', 'error'); throw e; }
-  };
-
-  const step6_Upload = async (videoAsset = pipelineState.videoAsset, metadata = pipelineState.promptOutput) => {
-    if (!videoAsset || !metadata) throw new Error("缺少影片或 Metadata 資料");
-    updateStatus('s6', 'loading'); setErrorMsg(null);
-    
-    // Inject Credentials if available
-    const authToUse = youtubeTokens ? youtubeTokens : undefined;
+    updateChannel(channel.id, { status: 'running' });
+    addLog(channel.id, channel.name, 'info', '🚀 開始自動化流程...');
 
     try {
-      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
-      const res = await callApi('upload', {
-        video_asset: videoAsset, 
-        metadata: metadata,
-        schedule: { privacy_status: 'public', publish_at: tomorrow.toISOString() },
-        authCredentials: authToUse
+      const res = await fetch('/api/pipeline', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ channelConfig: channel })
       });
-      setPipelineState(prev => ({ ...prev, uploadResult: res }));
-      updateStatus('s6', 'success');
-      return res;
-    } catch (e: any) { setErrorMsg(e.message); updateStatus('s6', 'error'); throw e; }
-  };
+      const result: PipelineResult = await res.json();
 
-  // --- Automation Orchestrator ---
-  const runFullAutomation = async () => {
-    if (isAutoRunning) return;
-    setIsAutoRunning(true);
-    setGlobalProgress(5);
-    setErrorMsg(null);
-    setStatuses({ s1: 'idle', s2: 'idle', s3: 'idle', s4: 'idle', s5: 'idle', s6: 'idle' });
-
-    try {
-      const s1 = await step1_Extract(); setGlobalProgress(20);
-      const s2 = await step2_Generate(s1); setGlobalProgress(35);
-      const s3 = await step3_Weight(s2); setGlobalProgress(50);
-      const s4 = await step4_Compose(s3); setGlobalProgress(65);
-      const s5 = await step5_Video(s4); setGlobalProgress(85);
-      await step6_Upload(s5, s4); setGlobalProgress(100);
-    } catch (error) {
-      console.error("Automation Stopped due to error");
-    } finally {
-      setIsAutoRunning(false);
+      if (result.success) {
+        addLog(channel.id, channel.name, 'success', '✅ 流程完成！影片已上傳。');
+        if (result.uploadId) {
+             addLog(channel.id, channel.name, 'success', `Video ID: ${result.uploadId}`);
+        }
+        updateChannel(channel.id, { status: 'success', lastRun: new Date().toLocaleString() });
+      } else {
+        addLog(channel.id, channel.name, 'error', `❌ 失敗: ${result.logs?.pop() || 'Unknown error'}`);
+        updateChannel(channel.id, { status: 'error' });
+      }
+    } catch (e: any) {
+      addLog(channel.id, channel.name, 'error', `API Error: ${e.message}`);
+      updateChannel(channel.id, { status: 'error' });
     }
   };
 
-  // --- Mock Test Helper ---
-  const mockTest = async (name: string): Promise<TestResult> => ({
-    moduleName: name, passed: true, logs: ["✅ 遠端 API 測試通過 (Server responded OK)"]
-  });
+  // --- Render Helpers ---
 
-  // --- Render ---
   return (
-    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-indigo-500/30">
-      
-      {/* Navbar / Progress */}
-      <div className="fixed top-0 left-0 right-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-700">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white">G</div>
-            <span className="font-bold text-lg tracking-tight">Shorts Automation System</span>
-          </div>
-          <div className="flex items-center gap-4">
-             <div className="text-xs text-slate-400">目前進度</div>
-             <div className="w-48 h-2 bg-slate-800 rounded-full overflow-hidden">
-               <div className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-700 ease-out" style={{ width: `${globalProgress}%` }} />
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      {/* Header */}
+      <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+             <div className="w-10 h-10 bg-gradient-to-tr from-red-600 to-indigo-600 rounded-lg flex items-center justify-center font-bold text-xl shadow-lg">S</div>
+             <div>
+                <h1 className="font-bold text-xl tracking-tight">Shorts Automation 2.0</h1>
+                <p className="text-xs text-slate-400">Multi-Channel Manager & Veo Integrated</p>
              </div>
-             <div className="text-xs font-mono w-8 text-right">{globalProgress}%</div>
+          </div>
+          <div className="flex gap-4">
+            <button 
+                onClick={() => setActiveTab('dashboard')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'dashboard' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+                儀表板
+            </button>
+            <button 
+                onClick={() => setActiveTab('logs')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeTab === 'logs' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+            >
+                系統日誌
+            </button>
           </div>
         </div>
-      </div>
+      </header>
 
-      <div className="pt-24 pb-20 max-w-4xl mx-auto px-6">
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto px-6 py-8">
         
-        {/* Hero Section */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-cyan-400 mb-4">
-            YouTube Shorts 自動化系統
-          </h1>
-          <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-            Full Stack Architecture: React (Client) + Vercel Functions (Server)
-          </p>
-
-          <div className="mt-8 flex justify-center items-center gap-4">
-            {youtubeTokens ? (
-              <div className="flex items-center gap-2">
-                <div className="px-6 py-3 bg-green-900/40 border border-green-500/50 rounded-full text-green-300 font-bold flex items-center gap-2 shadow-lg shadow-green-900/20">
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                  已連結 YouTube 帳號
+        {activeTab === 'dashboard' && (
+            <>
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold text-white">頻道管理 ({channels.length})</h2>
+                    <button 
+                        onClick={() => setIsAdding(true)}
+                        className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg font-medium shadow-lg shadow-emerald-900/20 transition-all"
+                    >
+                        <span>+ 新增頻道</span>
+                    </button>
                 </div>
-                <button 
-                  onClick={handleDisconnect}
-                  className="px-3 py-3 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-600 transition-colors"
-                  title="登出 / 斷開連結"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-                </button>
-              </div>
-            ) : (
-              <button 
-                onClick={handleConnectYouTube}
-                disabled={isAuthLoading}
-                className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-full font-bold shadow-lg shadow-red-900/20 transition-all flex items-center gap-2"
-              >
-                {isAuthLoading ? (
-                   <><svg className="animate-spin h-5 w-5 text-white" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>驗證中...</>
-                ) : (
-                   <>🔗 連結 YouTube 帳號</>
+
+                {/* Add Channel Modal (Inline) */}
+                {isAdding && (
+                    <div className="mb-8 p-6 bg-slate-900 border border-slate-700 rounded-xl animate-fade-in">
+                        <h3 className="text-lg font-bold mb-4">設定新頻道</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">頻道名稱 (識別用)</label>
+                                <input 
+                                    value={newChannelName} onChange={e => setNewChannelName(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm focus:border-indigo-500 outline-none"
+                                    placeholder="My Tech Shorts"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">關鍵字 (用逗號分隔)</label>
+                                <input 
+                                    value={newKeywords} onChange={e => setNewKeywords(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm focus:border-indigo-500 outline-none"
+                                    placeholder="AI, Gadgets"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">目標地區</label>
+                                <select 
+                                    value={newRegion} onChange={e => setNewRegion(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-sm focus:border-indigo-500 outline-none"
+                                >
+                                    <option value="US">United States (US)</option>
+                                    <option value="TW">Taiwan (TW)</option>
+                                    <option value="JP">Japan (JP)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3">
+                            <button onClick={() => setIsAdding(false)} className="px-4 py-2 text-slate-400 hover:text-white">取消</button>
+                            <button onClick={createChannel} className="px-6 py-2 bg-indigo-600 rounded hover:bg-indigo-500">確認新增</button>
+                        </div>
+                    </div>
                 )}
-              </button>
-            )}
-            {!youtubeTokens && (
-              <div className="text-xs text-slate-500 max-w-xs text-left">
-                * 需要連結帳號才能進行真實上傳。否則系統將使用模擬模式。
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* Data Input Form */}
-        <DataInputForm 
-          initialShortsData={MOCK_SHORTS_DATA}
-          initialChannelState={MOCK_CHANNEL_STATE}
-          onSave={(s, c) => { setInputShorts(s); setInputChannel(c); }}
-        />
+                {/* Channel Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {channels.map(channel => (
+                        <div key={channel.id} className="bg-slate-900 border border-slate-800 rounded-xl p-6 relative group hover:border-indigo-500/50 transition-colors">
+                             <div className="flex justify-between items-start mb-4">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white">{channel.name}</h3>
+                                    <div className="flex gap-2 mt-1">
+                                        <span className="px-2 py-0.5 rounded text-xs bg-slate-800 text-slate-400 border border-slate-700">{channel.regionCode}</span>
+                                        {channel.searchKeywords.map(k => (
+                                            <span key={k} className="px-2 py-0.5 rounded text-xs bg-indigo-900/30 text-indigo-300 border border-indigo-800/50">{k}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className={`px-3 py-1 rounded-full text-xs font-bold ${
+                                    channel.status === 'running' ? 'bg-blue-900/50 text-blue-300 animate-pulse' :
+                                    channel.status === 'success' ? 'bg-green-900/50 text-green-300' :
+                                    channel.status === 'error' ? 'bg-red-900/50 text-red-300' :
+                                    'bg-slate-800 text-slate-500'
+                                }`}>
+                                    {channel.status.toUpperCase()}
+                                </div>
+                             </div>
 
-        {/* Guide & Controls */}
-        <div className="flex justify-center mb-12">
-          <button
-            onClick={runFullAutomation}
-            disabled={isAutoRunning}
-            className={`px-8 py-4 rounded-full font-bold text-lg shadow-xl shadow-indigo-900/20 transform hover:scale-105 transition-all duration-300 flex items-center justify-center gap-3 ${isAutoRunning ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white ring-4 ring-indigo-900/50'}`}
-          >
-            {isAutoRunning ? (
-              <><span>自動化流程執行中...</span></>
-            ) : (
-              <><span>🚀 一鍵啟動後端自動化流程</span></>
-            )}
-          </button>
-        </div>
+                             <div className="grid grid-cols-2 gap-4 mb-6">
+                                <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                                    <div className="text-xs text-slate-500 mb-1">YouTube 授權狀態</div>
+                                    {channel.auth ? (
+                                        <div className="text-green-400 font-medium flex items-center gap-1">
+                                            <span>● 已連結</span>
+                                            <button onClick={() => updateChannel(channel.id, {auth: null})} className="text-xs text-slate-500 underline ml-2">斷開</button>
+                                        </div>
+                                    ) : (
+                                        <button onClick={() => startAuth(channel.id)} className="text-red-400 hover:text-red-300 text-sm font-bold underline">
+                                            未連結 (點擊授權)
+                                        </button>
+                                    )}
+                                </div>
+                                <div className="p-3 bg-slate-950 rounded border border-slate-800">
+                                    <div className="text-xs text-slate-500 mb-1">排程設定</div>
+                                    <div className="flex items-center justify-between">
+                                        <span className={channel.schedule.active ? 'text-white' : 'text-slate-500'}>
+                                            {channel.schedule.active ? '每天 09:00' : '已停用'}
+                                        </span>
+                                        <button 
+                                            onClick={() => updateChannel(channel.id, { schedule: { ...channel.schedule, active: !channel.schedule.active }})}
+                                            className={`w-8 h-4 rounded-full p-0.5 transition-colors ${channel.schedule.active ? 'bg-green-600' : 'bg-slate-700'}`}
+                                        >
+                                            <div className={`w-3 h-3 bg-white rounded-full transition-transform ${channel.schedule.active ? 'translate-x-4' : ''}`}></div>
+                                        </button>
+                                    </div>
+                                </div>
+                             </div>
 
-        {/* Error Display */}
-        {errorMsg && (
-          <div className="mb-8 p-4 bg-red-900/20 border-l-4 border-red-500 rounded-r text-red-200">
-            <strong className="block font-bold">系統訊息</strong>
-            <p className="text-sm opacity-90">{errorMsg}</p>
-          </div>
+                             <div className="flex gap-3">
+                                <button 
+                                    onClick={() => runAutomation(channel)}
+                                    disabled={!channel.auth || channel.status === 'running'}
+                                    className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 disabled:opacity-50 disabled:grayscale text-white rounded-lg font-bold shadow-lg shadow-indigo-900/20"
+                                >
+                                    {channel.status === 'running' ? '執行中...' : '🚀 立即執行全自動流程'}
+                                </button>
+                                <button 
+                                    onClick={() => deleteChannel(channel.id)}
+                                    className="px-3 py-3 bg-slate-800 hover:bg-red-900/30 text-slate-400 hover:text-red-400 rounded-lg transition-colors"
+                                    title="刪除頻道"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                             </div>
+
+                             {channel.lastRun && (
+                                <div className="mt-3 text-xs text-center text-slate-600">
+                                    上次執行: {channel.lastRun}
+                                </div>
+                             )}
+                        </div>
+                    ))}
+
+                    {channels.length === 0 && (
+                        <div className="col-span-full py-12 text-center text-slate-500 border-2 border-dashed border-slate-800 rounded-xl">
+                            尚未設定任何頻道。請點擊「新增頻道」開始。
+                        </div>
+                    )}
+                </div>
+            </>
         )}
 
-        {/* Pipeline Steps */}
-        <div className="flex flex-col gap-12 relative">
-           <div className="absolute left-[19px] top-10 bottom-10 w-0.5 bg-gradient-to-b from-indigo-900 via-slate-700 to-slate-900 -z-10"></div>
+        {activeTab === 'logs' && (
+            <div className="bg-slate-900 rounded-xl border border-slate-800 overflow-hidden">
+                <div className="p-4 bg-slate-800/50 border-b border-slate-800 font-bold text-slate-300">
+                    系統活動日誌
+                </div>
+                <div className="p-0">
+                    {logs.length === 0 ? (
+                        <div className="p-8 text-center text-slate-500">暫無活動紀錄</div>
+                    ) : (
+                        <div className="divide-y divide-slate-800 max-h-[600px] overflow-y-auto">
+                            {logs.map(log => (
+                                <div key={log.id} className="p-4 flex gap-4 hover:bg-slate-800/30 transition-colors">
+                                    <div className="text-xs text-slate-500 font-mono min-w-[80px]">{log.timestamp}</div>
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="font-bold text-indigo-300 text-sm">{log.channelName}</span>
+                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                                log.level === 'success' ? 'bg-green-900/30 text-green-400' :
+                                                log.level === 'error' ? 'bg-red-900/30 text-red-400' :
+                                                'bg-blue-900/30 text-blue-400'
+                                            }`}>{log.level}</span>
+                                        </div>
+                                        <p className={`text-sm ${log.level === 'error' ? 'text-red-200' : 'text-slate-300'}`}>
+                                            {log.message}
+                                        </p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
 
-           <ModuleCard
-             stepNumber="01" title="趨勢訊號分析" description="呼叫 Backend 分析原始數據。"
-             status={statuses.s1} canExecute={true} onExecute={step1_Extract}
-             onRunTest={() => mockTest("TrendExtractor")} data={pipelineState.trendSignals} testResult={testResults.t1}
-           />
-
-           <ModuleCard
-             stepNumber="02" title="候選題材生成" description="Backend 生成 3 個創意提案。"
-             status={statuses.s2} canExecute={!!pipelineState.trendSignals} onExecute={() => step2_Generate()}
-             onRunTest={() => mockTest("CandidateGenerator")} data={pipelineState.candidates} testResult={testResults.t2}
-           />
-
-           <ModuleCard
-             stepNumber="03" title="題材權重評分" description="Backend 計算權重並選出優勝者。"
-             status={statuses.s3} canExecute={!!pipelineState.candidates} onExecute={() => step3_Weight()}
-             onRunTest={() => mockTest("WeightEngine")} data={pipelineState.scoredCandidates} testResult={testResults.t3}
-           />
-
-           <ModuleCard
-             stepNumber="04" title="提示詞與腳本" description="Backend 產生詳細 Prompt 與 Metadata。"
-             status={statuses.s4} canExecute={!!pipelineState.scoredCandidates} onExecute={() => step4_Compose()}
-             onRunTest={() => mockTest("PromptComposer")} data={pipelineState.promptOutput} testResult={testResults.t4}
-           />
-
-           <ModuleCard
-             stepNumber="05" title="AI 影片生成 (Veo)" description="Server 呼叫 Veo 模型並回傳 Base64 串流。"
-             status={statuses.s5} canExecute={!!pipelineState.promptOutput} onExecute={() => step5_Video()}
-             onRunTest={() => mockTest("VideoGenerator")} data={pipelineState.videoAsset} testResult={testResults.t5}
-           >
-             {pipelineState.videoAsset && pipelineState.videoAsset.status === 'generated' && (
-               <div className="bg-black rounded-lg overflow-hidden border border-slate-700 shadow-2xl max-w-sm mx-auto">
-                 <div className="relative aspect-[9/16]">
-                    <video src={pipelineState.videoAsset.video_url} controls autoPlay loop className="w-full h-full object-cover" />
-                 </div>
-               </div>
-             )}
-           </ModuleCard>
-
-           <ModuleCard
-             stepNumber="06" title="自動上傳 (Server-Side)" description="使用 OAuth Token 進行真實 YouTube 上傳。"
-             status={statuses.s6} canExecute={!!pipelineState.videoAsset} onExecute={() => step6_Upload()}
-             onRunTest={() => mockTest("Uploader")} data={pipelineState.uploadResult} testResult={testResults.t6}
-           >
-             {pipelineState.uploadResult && (
-               <div className={`border rounded-xl p-4 text-center ${pipelineState.uploadResult.status === 'failed' ? 'bg-red-900/20 border-red-500' : 'bg-green-900/20 border-green-500/50'}`}>
-                 <h4 className={`font-bold ${pipelineState.uploadResult.status === 'failed' ? 'text-red-300' : 'text-green-300'}`}>
-                    {pipelineState.uploadResult.status === 'failed' ? '上傳失敗' : '上傳成功 (Real)'}
-                 </h4>
-                 {pipelineState.uploadResult.status !== 'failed' && (
-                    <a href={pipelineState.uploadResult.platform_url} target="_blank" className="text-blue-400 underline block mt-2">
-                        {pipelineState.uploadResult.platform_url}
-                    </a>
-                 )}
-               </div>
-             )}
-           </ModuleCard>
-
-        </div>
-      </div>
-      <footer className="bg-slate-900 border-t border-slate-800 py-8 text-center text-slate-500 text-sm">© 2023 Shorts Automation System (Full Stack Edition)</footer>
+      </main>
     </div>
   );
 };
