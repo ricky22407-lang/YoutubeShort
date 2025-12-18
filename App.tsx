@@ -114,12 +114,20 @@ const AppContent: React.FC = () => {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ code })
       });
+      
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Auth API Error: ${text}`);
+      }
+
       const data = await res.json();
       if (data.tokens) {
         updateChannel(channelId, { auth: data.tokens });
         addLog(channelId, 'System', 'success', 'YouTube Auth Successful!');
       }
-    } catch (e) { addLog(channelId, 'System', 'error', 'Auth Failed'); }
+    } catch (e: any) { 
+      addLog(channelId, 'System', 'error', e.message); 
+    }
   };
 
   const createChannel = () => {
@@ -146,31 +154,51 @@ const AppContent: React.FC = () => {
     localStorage.setItem('sas_pending_auth_id', channelId);
     try {
         const res = await fetch('/api/auth?action=url');
+        if (!res.ok) throw new Error("Could not fetch Auth URL");
         const data = await res.json();
         if (data.url) window.location.href = data.url;
-    } catch (e) { alert("API Connection Failed"); }
+    } catch (e: any) { addLog(channelId, 'System', 'error', e.message); }
   };
 
   const runAutomation = async (channel: ChannelConfig) => {
     if (!channel.auth) return alert("Authorize YouTube first");
+    
     updateChannel(channel.id, { status: 'running' });
     addLog(channel.id, channel.name, 'info', 'Initiating 7-Stage Pipeline...');
+    
     try {
       const res = await fetch('/api/pipeline', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify({ channelConfig: channel })
       });
-      const result: PipelineResult = await res.json();
-      if (!res.ok || !result.success) {
-        if (result.error?.includes("Requested entity was not found")) setHasApiKey(false);
-        throw new Error(result.error || "Pipeline Failed");
+
+      let result: PipelineResult;
+      const contentType = res.headers.get("content-type");
+      
+      if (contentType && contentType.includes("application/json")) {
+        result = await res.json();
+      } else {
+        const textError = await res.text();
+        throw new Error(`Server returned non-JSON response: ${textError.slice(0, 100)}${textError.length > 100 ? '...' : ''}`);
       }
+
+      if (!res.ok || !result.success) {
+        if (result.error?.includes("Requested entity was not found")) {
+          setHasApiKey(false);
+        }
+        throw new Error(result.error || "Pipeline Failed (Check Server Logs)");
+      }
+
       addLog(channel.id, channel.name, 'success', `Video Generated & Uploaded: ${result.uploadId}`);
       updateChannel(channel.id, { status: 'success', lastRun: new Date().toLocaleString() });
     } catch (e: any) {
-      addLog(channel.id, channel.name, 'error', e.message);
+      addLog(channel.id, channel.name, 'error', `CRITICAL: ${e.message}`);
       updateChannel(channel.id, { status: 'error' });
+      console.error("Pipeline Failure Detail:", e);
     }
   };
 
