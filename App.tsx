@@ -5,7 +5,7 @@ import {
 } from './types';
 import { MOCK_CHANNEL_STATE } from './constants';
 
-// Proper global augmentation
+// Proper global augmentation for AIStudio selection dialog
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;
@@ -88,6 +88,7 @@ const AppContent: React.FC = () => {
   const handleSelectKey = async () => {
     if (window.aistudio) {
       await window.aistudio.openSelectKey();
+      // Guidelines: proceed immediately to avoid race condition
       setHasApiKey(true);
     }
   };
@@ -205,7 +206,7 @@ const AppContent: React.FC = () => {
              <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-purple-600 rounded-2xl flex items-center justify-center font-black text-2xl shadow-xl shadow-indigo-500/20">S</div>
              <div>
                 <h1 className="font-black text-2xl tracking-tighter uppercase">Shorts Auto</h1>
-                <p className="text-[10px] text-slate-500 font-mono tracking-widest">BUILD_V2.0.6_VEO_ENABLED</p>
+                <p className="text-[10px] text-slate-500 font-mono tracking-widest">BUILD_V2.0.7_VEO_ENABLED</p>
              </div>
           </div>
           <nav className="flex gap-2 p-1 bg-slate-950 rounded-xl border border-slate-800/50">
