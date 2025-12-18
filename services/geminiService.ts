@@ -1,7 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { Buffer } from 'buffer';
 
-// Safe access to process.env to prevent browser crashes if this file is bundled
 const getEnv = (key: string) => {
   if (typeof process !== 'undefined' && process.env) {
     return process.env[key];
@@ -9,7 +8,8 @@ const getEnv = (key: string) => {
   return '';
 };
 
-const textModelId = "gemini-2.5-flash";
+// Updated model names as per latest guidelines
+const textModelId = "gemini-3-flash-preview";
 const videoModelId = "veo-3.1-fast-generate-preview";
 
 export const generateJSON = async <T>(
@@ -19,7 +19,7 @@ export const generateJSON = async <T>(
 ): Promise<T> => {
   const apiKey = getEnv('API_KEY');
   if (!apiKey) {
-    throw new Error("Server Error: API_KEY is missing. Please check Vercel environment variables.");
+    throw new Error("API Key Missing. In production, ensure Vercel Env variables are set.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -51,16 +51,12 @@ export const generateJSON = async <T>(
 export const generateVideo = async (prompt: string): Promise<string> => {
   const apiKey = getEnv('API_KEY');
   if (!apiKey) {
-    throw new Error("CRITICAL: API_KEY is missing. Veo requires a valid API Key.");
+    throw new Error("API Key Missing for Video Generation.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
 
-  console.log(`[Veo System v2.0.4] Starting generation. Model: ${videoModelId}`);
-  console.log(`[Veo] Key Status: ${apiKey.substring(0, 4)}...`);
-
-  // Vercel Hobby limits functions to 10s (sometimes 60s). Veo takes longer.
-  const TIMEOUT_MS = 55000; // 55 seconds safety margin
+  const TIMEOUT_MS = 110000; // Extend timeout for video generation (Vercel Pro/Teams support longer)
 
   const generatePromise = async () => {
     try {
@@ -74,56 +70,34 @@ export const generateVideo = async (prompt: string): Promise<string> => {
         }
       });
 
-      console.log("[Veo] Operation started. Polling for completion...");
-
-      // Polling loop
       while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await new Promise(resolve => setTimeout(resolve, 10000));
         operation = await ai.operations.getVideosOperation({operation: operation});
-        console.log(`[Veo] Polling state: ${operation.metadata?.state || 'processing'}`);
-        
-        if (operation.error) {
-             throw new Error(`Veo Operation Error: ${JSON.stringify(operation.error)}`);
-        }
       }
 
       const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
       if (!downloadLink) {
-        throw new Error("Veo completed but returned NO video URI. The output might have been blocked by safety filters.");
+        throw new Error("Veo returned no video URI.");
       }
 
-      console.log("[Veo] Generation complete. Fetching video bytes...");
-
-      // Fetch the raw MP4 bytes using the API Key
       const response = await fetch(`${downloadLink}&key=${apiKey}`);
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to download video bytes. Status: ${response.status}. Details: ${errorText}`);
-      }
+      if (!response.ok) throw new Error("Failed to download video bytes.");
 
       const arrayBuffer = await response.arrayBuffer();
-      
-      // Server-side buffer handling
-      let base64 = '';
-      if (typeof Buffer !== 'undefined') {
-          base64 = Buffer.from(arrayBuffer).toString('base64');
-      } else {
-          throw new Error("Environment does not support Buffer (Client-side execution blocked).");
-      }
+      const base64 = Buffer.from(arrayBuffer).toString('base64');
       
       return `data:video/mp4;base64,${base64}`;
 
     } catch (error: any) {
       console.error("Gemini API Error (Video):", error);
-      throw new Error(`Veo API Failure: ${error.message || JSON.stringify(error)}`);
+      throw new Error(`Veo API Failure: ${error.message}`);
     }
   };
 
   return Promise.race([
     generatePromise(),
     new Promise<string>((_, reject) => 
-        setTimeout(() => reject(new Error("Video Generation Timed Out (Vercel limit reached). Check logs.")), TIMEOUT_MS)
+        setTimeout(() => reject(new Error("Video Generation Timed Out.")), TIMEOUT_MS)
     )
   ]);
 };
