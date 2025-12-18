@@ -1,15 +1,10 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Buffer } from 'buffer';
 
-const getEnv = (key: string) => {
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env[key];
-  }
-  return '';
-};
-
 // Updated model names as per latest guidelines
-const textModelId = "gemini-3-flash-preview";
+// For complex text tasks (reasoning, prompt composition), use gemini-3-pro-preview
+const textModelId = "gemini-3-pro-preview";
 const videoModelId = "veo-3.1-fast-generate-preview";
 
 export const generateJSON = async <T>(
@@ -17,11 +12,13 @@ export const generateJSON = async <T>(
   systemInstruction: string,
   responseSchema?: any
 ): Promise<T> => {
-  const apiKey = getEnv('API_KEY');
+  // Always obtain API key directly from process.env.API_KEY
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    throw new Error("API Key Missing. In production, ensure Vercel Env variables are set.");
+    throw new Error("API Key Missing. Please ensure an API key is selected.");
   }
 
+  // Create a new GoogleGenAI instance right before the call
   const ai = new GoogleGenAI({ apiKey });
 
   try {
@@ -36,6 +33,7 @@ export const generateJSON = async <T>(
       },
     });
 
+    // Access .text property directly (do not call as method)
     const text = response.text;
     if (!text) {
       throw new Error("No text returned from Gemini.");
@@ -49,14 +47,16 @@ export const generateJSON = async <T>(
 };
 
 export const generateVideo = async (prompt: string): Promise<string> => {
-  const apiKey = getEnv('API_KEY');
+  // Always obtain API key directly from process.env.API_KEY
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
     throw new Error("API Key Missing for Video Generation.");
   }
 
+  // Create a new GoogleGenAI instance right before the call
   const ai = new GoogleGenAI({ apiKey });
 
-  const TIMEOUT_MS = 110000; // Extend timeout for video generation (Vercel Pro/Teams support longer)
+  const TIMEOUT_MS = 110000; // Extend timeout for video generation
 
   const generatePromise = async () => {
     try {
@@ -71,6 +71,7 @@ export const generateVideo = async (prompt: string): Promise<string> => {
       });
 
       while (!operation.done) {
+        // Wait for 10 seconds before polling again
         await new Promise(resolve => setTimeout(resolve, 10000));
         operation = await ai.operations.getVideosOperation({operation: operation});
       }
@@ -80,6 +81,7 @@ export const generateVideo = async (prompt: string): Promise<string> => {
         throw new Error("Veo returned no video URI.");
       }
 
+      // Append API key when fetching from the download link as per guidelines
       const response = await fetch(`${downloadLink}&key=${apiKey}`);
       if (!response.ok) throw new Error("Failed to download video bytes.");
 
