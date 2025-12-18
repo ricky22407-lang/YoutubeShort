@@ -5,7 +5,7 @@ import {
 import { MOCK_CHANNEL_STATE } from './constants';
 import { ModuleCard } from './components/ModuleCard';
 
-// Test Runners
+// 測試執行器
 import { runTrendExtractorTests } from './tests/TrendSignalExtractor.test';
 import { runCandidateGeneratorTests } from './tests/CandidateThemeGenerator.test';
 import { runWeightEngineTests } from './tests/CandidateWeightEngine.test';
@@ -23,7 +23,7 @@ const App: React.FC = () => {
   const [pipelineStates, setPipelineStates] = useState<Record<string, any>>({});
   const [testResults, setTestResults] = useState<Record<string, any>>({});
 
-  // Form State
+  // 表單狀態
   const [newChannelName, setNewChannelName] = useState("");
   const [newKeywords, setNewKeywords] = useState("AI, Tech, Science");
 
@@ -77,7 +77,7 @@ const App: React.FC = () => {
     setChannels([...channels, newChannel]);
     setIsAdding(false);
     setNewChannelName("");
-    addLog(newChannel.id, 'success', `頻道 ${newChannelName} 已成功建立。`);
+    addLog(newChannel.id, 'success', `頻道 ${newChannelName} 設定完成。`);
   };
 
   const deleteChannel = (id: string) => {
@@ -86,11 +86,9 @@ const App: React.FC = () => {
   };
 
   const runPipeline = async (channel: ChannelConfig) => {
-    // 確保介面切換
     setByChannelId(channel.id);
     setActiveTab('dashboard');
-    
-    addLog(channel.id, 'info', '初始化全自動流水線...');
+    addLog(channel.id, 'info', '開始執行自動化流水線...');
     
     setPipelineStates(prev => ({ 
       ...prev, 
@@ -108,7 +106,7 @@ const App: React.FC = () => {
       
       const result: PipelineResult = await res.json();
       if (result.success) {
-        addLog(channel.id, 'success', '全流程執行成功！');
+        addLog(channel.id, 'success', '全流程自動化成功！');
         setPipelineStates(prev => ({ 
           ...prev, 
           [channel.id]: { status: 'success', data: result, currentStep: 7 } 
@@ -117,7 +115,7 @@ const App: React.FC = () => {
         throw new Error(result.error);
       }
     } catch (e: any) {
-      addLog(channel.id, 'info', '進入模擬執行模式...');
+      addLog(channel.id, 'info', 'API 未偵測，啟動本地模擬展示邏輯...');
       simulatePipeline(channel.id);
     }
   };
@@ -129,18 +127,18 @@ const App: React.FC = () => {
         ...prev, 
         [channelId]: { currentStep: step, status: 'running' } 
       }));
-      addLog(channelId, 'info', `正在處理模組：0${step}`);
-      await new Promise(r => setTimeout(r, 1200));
+      addLog(channelId, 'info', `正在執行步驟 0${step}...`);
+      await new Promise(r => setTimeout(r, 1000));
     }
     
-    addLog(channelId, 'success', '模擬流程完成！');
+    addLog(channelId, 'success', '模擬執行完成！影片已生成。');
     setPipelineStates(prev => ({ 
       ...prev, 
       [channelId]: { 
         status: 'success', 
         currentStep: 7,
         data: {
-          logs: ["Simulated: Signal Extraction (100%)", "Simulated: Winner Concept 'AI Cat'"],
+          logs: ["Simulated: Signal Extraction", "Simulated: Prompt Optimized"],
           videoUrl: "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" 
         } 
       } 
@@ -156,42 +154,45 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-200 antialiased overflow-hidden">
+    <div className="flex min-h-screen bg-[#020617] text-slate-200 antialiased overflow-hidden">
       
-      {/* --- SIDEBAR --- */}
-      <aside className="w-72 bg-slate-900 border-r border-slate-800 flex flex-col fixed inset-y-0 z-50">
-        <div className="p-8">
-          <div className="flex items-center gap-3 mb-12">
-            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-black text-white shadow-xl shadow-indigo-500/20">S</div>
-            <h1 className="font-bold text-xl tracking-tighter">Shorts AI</h1>
+      {/* 側邊欄 */}
+      <aside className="w-80 bg-slate-900/40 border-r border-slate-800/60 flex flex-col fixed inset-y-0 z-50 backdrop-blur-xl">
+        <div className="p-10">
+          <div className="flex items-center gap-4 mb-14 group">
+            <div className="w-12 h-12 bg-gradient-to-tr from-indigo-600 to-violet-600 rounded-2xl flex items-center justify-center font-black text-white text-xl shadow-2xl shadow-indigo-500/20 group-hover:scale-110 transition-all">S</div>
+            <div>
+              <h1 className="font-bold text-xl tracking-tight text-white leading-none">Shorts AI</h1>
+              <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest mt-1">Automation v2.3</p>
+            </div>
           </div>
           
-          <nav className="space-y-1">
+          <nav className="space-y-2">
             <button 
               onClick={() => { setActiveTab('dashboard'); setByChannelId(null); }}
-              className={`w-full text-left px-5 py-3 rounded-xl transition-all flex items-center gap-3 ${activeTab === 'dashboard' && !activeChannelId ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+              className={`w-full text-left px-5 py-4 rounded-2xl transition-all flex items-center gap-4 ${activeTab === 'dashboard' && !activeChannelId ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}
             >
-              📊 <span className="text-sm font-medium">總覽儀表板</span>
+              <span className="text-xl">📊</span> <span className="text-sm font-bold">總覽儀表板</span>
             </button>
             <button 
               onClick={() => setActiveTab('logs')}
-              className={`w-full text-left px-5 py-3 rounded-xl transition-all flex items-center gap-3 ${activeTab === 'logs' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-slate-800'}`}
+              className={`w-full text-left px-5 py-4 rounded-2xl transition-all flex items-center gap-4 ${activeTab === 'logs' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}
             >
-              📜 <span className="text-sm font-medium">系統日誌</span>
+              <span className="text-xl">📜</span> <span className="text-sm font-bold">系統日誌</span>
             </button>
           </nav>
 
-          <div className="mt-12">
-            <div className="flex items-center justify-between mb-4 px-2">
-               <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">頻道清單</p>
-               <button onClick={() => setIsAdding(true)} className="text-indigo-400 hover:text-indigo-300 text-sm">+</button>
+          <div className="mt-16">
+            <div className="flex items-center justify-between mb-6 px-3">
+               <p className="text-[11px] font-black text-slate-500 uppercase tracking-widest">頻道監控列表</p>
+               <button onClick={() => setIsAdding(true)} className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center text-indigo-400 hover:bg-indigo-600 hover:text-white transition-all text-sm">+</button>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1.5 max-h-[40vh] overflow-y-auto pr-2 custom-scrollbar">
               {channels.map(c => (
                 <div key={c.id} className="group flex items-center gap-1">
                   <button 
                     onClick={() => { setByChannelId(c.id); setActiveTab('dashboard'); }}
-                    className={`flex-1 text-left px-4 py-2 rounded-lg text-xs transition-all truncate ${activeChannelId === c.id ? 'bg-slate-800 text-indigo-400 font-bold border border-slate-700' : 'text-slate-500 hover:text-slate-300'}`}
+                    className={`flex-1 text-left px-5 py-3 rounded-xl text-xs transition-all truncate border ${activeChannelId === c.id ? 'bg-indigo-600/10 text-indigo-400 border-indigo-500/30' : 'text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800/30'}`}
                   >
                     {c.name}
                   </button>
@@ -201,106 +202,142 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
+        
+        <div className="mt-auto p-8 border-t border-slate-800/40">
+           <div className="flex items-center gap-3">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_#22c55e]"></div>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">Gemini Engine Online</span>
+           </div>
+        </div>
       </aside>
 
-      {/* --- MAIN --- */}
-      <main className="flex-1 ml-72 h-screen overflow-y-auto">
-        <header className="h-20 border-b border-slate-800 flex items-center justify-between px-10 bg-slate-950/80 backdrop-blur-xl sticky top-0 z-40">
-          <h2 className="font-bold text-lg">
-            {activeChannelId ? `執行頻道：${channels.find(c => c.id === activeChannelId)?.name}` : '系統狀態'}
-          </h2>
-          <div className="flex items-center gap-4">
-             <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
-             <span className="text-[10px] font-black text-slate-400 tracking-wider uppercase">Vercel 部署已就緒</span>
+      {/* 主介面 */}
+      <main className="flex-1 ml-80 h-screen overflow-y-auto bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-indigo-900/10 via-slate-950 to-slate-950">
+        <header className="h-24 border-b border-slate-800/50 flex items-center justify-between px-12 bg-slate-950/60 backdrop-blur-md sticky top-0 z-40">
+          <div>
+            <h2 className="font-black text-2xl text-white tracking-tight">
+              {activeChannelId ? channels.find(c => c.id === activeChannelId)?.name : '系統概覽 Dashboard'}
+            </h2>
+            <p className="text-xs text-slate-500 mt-1 uppercase tracking-widest font-bold">YouTube Shorts 自動化核心控制台</p>
+          </div>
+          <div className="flex items-center gap-8">
+             <div className="text-right">
+                <p className="text-[10px] font-black text-slate-600 uppercase tracking-tighter">每日剩餘額度</p>
+                <p className="text-lg font-mono font-black text-indigo-400">92 / 100</p>
+             </div>
+             <div className="w-12 h-12 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-indigo-400 text-xl shadow-inner">
+                👤
+             </div>
           </div>
         </header>
 
-        <div className="p-10 max-w-5xl mx-auto">
+        <div className="p-12 max-w-6xl mx-auto">
           {activeTab === 'dashboard' && !activeChannelId && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in">
-              {isAdding && (
-                <div className="bg-slate-900 p-8 rounded-3xl border-2 border-indigo-500 shadow-2xl">
-                  <h3 className="font-bold text-white mb-6">新增頻道</h3>
-                  <div className="space-y-4">
-                    <input 
-                      placeholder="頻道名稱" 
-                      value={newChannelName} onChange={e => setNewChannelName(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3.5 text-sm focus:border-indigo-500 outline-none" 
-                    />
-                    <input 
-                      placeholder="關鍵字" 
-                      value={newKeywords} onChange={e => setNewKeywords(e.target.value)}
-                      className="w-full bg-slate-800 border border-slate-700 rounded-xl p-3.5 text-sm focus:border-indigo-500 outline-none" 
-                    />
-                    <div className="flex gap-2">
-                      <button onClick={createChannel} className="flex-1 bg-indigo-600 py-3.5 rounded-xl text-sm font-bold shadow-lg">建立頻道</button>
-                      <button onClick={() => setIsAdding(false)} className="px-4 text-slate-500 text-xs">取消</button>
+            <div className="space-y-10 animate-fade-in">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {isAdding && (
+                  <div className="bg-slate-900/60 p-10 rounded-[2.5rem] border-2 border-indigo-500/40 ring-8 ring-indigo-500/5 shadow-2xl animate-slide-down">
+                    <h3 className="font-black text-xl text-white mb-8">建立新監控頻道</h3>
+                    <div className="space-y-6">
+                      <div>
+                        <label className="text-[11px] font-black text-slate-500 uppercase mb-2 block tracking-widest">頻道名稱</label>
+                        <input 
+                          placeholder="例如: AI News Hub" 
+                          value={newChannelName} onChange={e => setNewChannelName(e.target.value)}
+                          className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-black text-slate-500 uppercase mb-2 block tracking-widest">核心搜尋標籤</label>
+                        <input 
+                          placeholder="例如: 科學, 實驗" 
+                          value={newKeywords} onChange={e => setNewKeywords(e.target.value)}
+                          className="w-full bg-slate-800/50 border border-slate-700 rounded-2xl p-4 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all" 
+                        />
+                      </div>
+                      <button onClick={createChannel} className="w-full bg-indigo-600 hover:bg-indigo-500 py-5 rounded-2xl text-sm font-black shadow-2xl shadow-indigo-500/30 transition-all transform active:scale-95">確認並儲存</button>
+                      <button onClick={() => setIsAdding(false)} className="w-full text-slate-500 text-xs py-2 font-bold uppercase tracking-widest">取消</button>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {channels.map(c => (
-                <div key={c.id} className="bg-slate-900 p-8 rounded-3xl border border-slate-800 hover:border-indigo-500 transition-all group shadow-sm">
-                  <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center text-xl mb-6">📺</div>
-                  <h3 className="font-bold text-xl text-white mb-2">{c.name}</h3>
-                  <p className="text-xs text-slate-500 mb-8 h-8 line-clamp-2">標籤: {c.searchKeywords.join(', ')}</p>
-                  <button 
-                    onClick={() => runPipeline(c)}
-                    className="w-full py-4 bg-slate-800 group-hover:bg-indigo-600 rounded-2xl text-sm font-bold transition-all shadow-md active:scale-95"
-                  >
-                    🚀 啟動自動化
-                  </button>
-                </div>
-              ))}
+                {channels.map(c => (
+                  <div key={c.id} className="bg-slate-900/40 p-10 rounded-[2.5rem] border border-slate-800/60 hover:border-indigo-500/40 hover:bg-slate-900/60 transition-all group relative overflow-hidden shadow-sm">
+                    <div className="flex justify-between items-start mb-10">
+                      <div className="w-16 h-16 bg-slate-800 rounded-[1.25rem] flex items-center justify-center text-3xl shadow-inner border border-slate-700/50">📺</div>
+                      <div className="px-3 py-1 bg-indigo-500/10 rounded-full text-[10px] font-black text-indigo-400 uppercase tracking-widest border border-indigo-500/20">
+                        {c.status}
+                      </div>
+                    </div>
+                    <h3 className="font-black text-2xl text-white mb-3">{c.name}</h3>
+                    <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed h-12 mb-10">搜尋策略: {c.searchKeywords.join(', ')}</p>
+                    <button 
+                      onClick={() => runPipeline(c)}
+                      className="w-full py-5 bg-slate-800 group-hover:bg-indigo-600 rounded-2xl text-sm font-black transition-all shadow-xl active:scale-95 flex items-center justify-center gap-3"
+                    >
+                      🚀 啟動完整流程
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
           {activeTab === 'dashboard' && activeChannelId && (
-            <div className="space-y-8 animate-fade-in pb-20">
-               <div className="flex items-center justify-between bg-slate-900 p-10 rounded-3xl border border-slate-800 shadow-xl">
-                  <div>
-                    <h3 className="font-bold text-2xl text-white mb-1">{channels.find(c => c.id === activeChannelId)?.name}</h3>
-                    <p className="text-sm text-slate-500 italic">流水線視覺化監測器</p>
+            <div className="space-y-10 animate-fade-in pb-24">
+               <div className="flex items-center justify-between bg-slate-900/40 p-12 rounded-[3rem] border border-slate-800/60 shadow-2xl backdrop-blur-md">
+                  <div className="flex items-center gap-8">
+                    <div className="w-20 h-20 bg-indigo-600/10 rounded-3xl flex items-center justify-center text-4xl border border-indigo-500/20 shadow-inner">⚡</div>
+                    <div>
+                      <h3 className="font-black text-3xl text-white mb-2">{channels.find(c => c.id === activeChannelId)?.name}</h3>
+                      <p className="text-sm text-slate-400 font-medium">即時流水線視覺化監測中</p>
+                    </div>
                   </div>
                   <button 
                     onClick={() => runPipeline(channels.find(c => c.id === activeChannelId)!)}
-                    className="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-500 rounded-2xl text-sm font-bold shadow-lg active:scale-95 transition-all"
+                    className="px-10 py-5 bg-indigo-600 hover:bg-indigo-500 rounded-2xl text-sm font-black shadow-2xl shadow-indigo-500/30 active:scale-95 transition-all"
                   >
-                    重新執行
+                    重新執行所有模組
                   </button>
                </div>
 
-               <div className="space-y-6">
+               <div className="space-y-8 max-w-4xl mx-auto">
                   <ModuleCard 
-                    title="趨勢信號提取" stepNumber="01" description="解析數據頻率"
+                    title="趨勢信號提取" stepNumber="01" description="從 YouTube 數據庫抓取並解析最熱門關鍵字與頻率"
                     status={getModuleStatus(activeChannelId, 1)}
                     onRunTest={async () => runTrendExtractorTests()}
                     onExecute={() => {}} canExecute={true} data={pipelineStates[activeChannelId]?.data?.logs} testResult={testResults.trend}
                   />
 
                   <ModuleCard 
-                    title="題材候選生成" stepNumber="02" description="Gemini 創意生成"
+                    title="題材候選生成" stepNumber="02" description="Gemini 生成 3 個具備病毒式傳播潛力的影片構思"
                     status={getModuleStatus(activeChannelId, 2)}
                     onRunTest={async () => runCandidateGeneratorTests()}
                     onExecute={() => {}} canExecute={true} data={null} testResult={testResults.cand}
                   />
 
                   <ModuleCard 
-                    title="影片生成 (Veo API)" stepNumber="05" description="生成 9:16 短影片資產"
+                    title="影片資產排版" stepNumber="04" description="撰寫精確的影片 Prompt、標題與 SEO 描述標籤"
+                    status={getModuleStatus(activeChannelId, 4)}
+                    onRunTest={async () => runPromptComposerTests()}
+                    onExecute={() => {}} canExecute={true} data={null} testResult={testResults.composer}
+                  />
+
+                  <ModuleCard 
+                    title="影片生成 (Veo 3.1)" stepNumber="05" description="呼叫 Google Veo 核心生成 9:16 高解析短影片"
                     status={getModuleStatus(activeChannelId, 5)}
                     onRunTest={async () => runVideoGeneratorTests()}
                     onExecute={() => {}} canExecute={true} data={null} testResult={testResults.video}
                   >
                     {pipelineStates[activeChannelId]?.data?.videoUrl && (
-                      <div className="mt-8 rounded-2xl overflow-hidden border border-slate-700 bg-black aspect-[9/16] max-w-[280px] mx-auto shadow-2xl">
+                      <div className="mt-12 rounded-[2.5rem] overflow-hidden border-8 border-slate-900 bg-black aspect-[9/16] max-w-[320px] mx-auto shadow-[0_0_50px_rgba(0,0,0,0.5)]">
                          <video src={pipelineStates[activeChannelId].data.videoUrl} controls className="w-full h-full object-cover" />
                       </div>
                     )}
                   </ModuleCard>
 
                   <ModuleCard 
-                    title="發佈與排程" stepNumber="06" description="YouTube API 上傳"
+                    title="上傳與排程發佈" stepNumber="06" description="自動推送影片至 YouTube 頻道並設定隱私狀態"
                     status={getModuleStatus(activeChannelId, 6)}
                     onRunTest={async () => runUploaderTests()}
                     onExecute={() => {}} canExecute={true} data={null} testResult={testResults.uploader}
@@ -310,20 +347,25 @@ const App: React.FC = () => {
           )}
 
           {activeTab === 'logs' && (
-            <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden shadow-2xl">
-              <div className="p-6 bg-slate-800/50 border-b border-slate-800 font-bold">全系統日誌監控</div>
-              <div className="divide-y divide-slate-800 max-h-[70vh] overflow-y-auto custom-scrollbar">
+            <div className="bg-slate-900/60 rounded-[3rem] border border-slate-800/60 overflow-hidden animate-fade-in shadow-2xl">
+              <div className="p-10 bg-slate-800/40 border-b border-slate-800/60 flex justify-between items-center">
+                 <span className="font-black text-white text-lg tracking-tight">核心系統全活動日誌</span>
+                 <button onClick={() => setLogs([])} className="text-xs text-slate-500 hover:text-red-400 transition-colors font-black uppercase tracking-widest">清除記錄</button>
+              </div>
+              <div className="divide-y divide-slate-800/40 max-h-[70vh] overflow-y-auto custom-scrollbar">
                 {logs.length === 0 ? (
-                  <div className="p-20 text-center text-slate-600">目前尚無日誌</div>
+                  <div className="p-32 text-center text-slate-600 font-bold italic">目前尚無活動日誌記錄</div>
                 ) : logs.map(l => (
-                  <div key={l.id} className="p-5 hover:bg-slate-800/20 transition-all flex gap-6">
-                    <span className="text-[10px] font-mono text-slate-500 mt-1">{l.timestamp}</span>
+                  <div key={l.id} className="p-8 hover:bg-slate-800/20 transition-all flex gap-8 group">
+                    <span className="text-[11px] font-mono text-slate-600 mt-1.5">{l.timestamp}</span>
                     <div>
-                      <span className={`text-[10px] font-black px-2 py-0.5 rounded mr-3 ${l.level === 'error' ? 'bg-red-900 text-red-400' : 'bg-indigo-900 text-indigo-400'}`}>
-                        {l.level.toUpperCase()}
-                      </span>
-                      <span className="text-xs font-bold text-slate-300">{l.channelName}</span>
-                      <p className="text-sm text-slate-400 mt-1">{l.message}</p>
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className={`text-[10px] font-black px-3 py-1 rounded-full ${l.level === 'error' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'}`}>
+                          {l.level.toUpperCase()}
+                        </span>
+                        <span className="text-sm font-black text-slate-300 group-hover:text-indigo-400 transition-colors">{l.channelName}</span>
+                      </div>
+                      <p className="text-sm text-slate-400 leading-relaxed font-medium">{l.message}</p>
                     </div>
                   </div>
                 ))}
