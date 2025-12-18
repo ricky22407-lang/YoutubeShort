@@ -1,14 +1,18 @@
 import { GoogleGenAI } from "@google/genai";
 import { Buffer } from 'buffer';
 
-const getEnv = (key: string) => {
-  if (typeof process !== 'undefined' && process.env) {
-    return process.env[key];
-  }
-  return '';
+/**
+ * Gemini Service
+ * Handles core AI interactions for text and video generation.
+ */
+
+const getApiKey = () => {
+  // Priority: process.env.API_KEY (Server-side)
+  // In Vite/Frontend, process.env.API_KEY is often replaced by define in vite.config
+  return process.env.API_KEY || '';
 };
 
-// Updated model names as per latest guidelines
+// Use the latest recommended model names
 const textModelId = "gemini-3-flash-preview";
 const videoModelId = "veo-3.1-fast-generate-preview";
 
@@ -17,9 +21,9 @@ export const generateJSON = async <T>(
   systemInstruction: string,
   responseSchema?: any
 ): Promise<T> => {
-  const apiKey = getEnv('API_KEY');
+  const apiKey = getApiKey();
   if (!apiKey) {
-    throw new Error("API Key Missing. In production, ensure Vercel Env variables are set.");
+    throw new Error("Configuration Error: API_KEY environment variable is not set.");
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -37,67 +41,52 @@ export const generateJSON = async <T>(
     });
 
     const text = response.text;
-    if (!text) {
-      throw new Error("No text returned from Gemini.");
-    }
+    if (!text) throw new Error("Gemini returned an empty text response.");
 
     return JSON.parse(text) as T;
   } catch (error: any) {
-    console.error("Gemini API Error (Text):", error);
-    throw new Error(`Text Gen Failed: ${error.message}`);
+    console.error("[generateJSON_Error]", error);
+    throw new Error(`Gemini Text Gen Failure: ${error.message}`);
   }
 };
 
 export const generateVideo = async (prompt: string): Promise<string> => {
-  const apiKey = getEnv('API_KEY');
-  if (!apiKey) {
-    throw new Error("API Key Missing for Video Generation.");
-  }
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("Configuration Error: API_KEY is required for video generation.");
 
   const ai = new GoogleGenAI({ apiKey });
 
-  const TIMEOUT_MS = 110000; // Extend timeout for video generation (Vercel Pro/Teams support longer)
-
-  const generatePromise = async () => {
-    try {
-      let operation = await ai.models.generateVideos({
-        model: videoModelId,
-        prompt: prompt,
-        config: {
-          numberOfVideos: 1,
-          resolution: '720p',
-          aspectRatio: '9:16'
-        }
-      });
-
-      while (!operation.done) {
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        operation = await ai.operations.getVideosOperation({operation: operation});
+  try {
+    let operation = await ai.models.generateVideos({
+      model: videoModelId,
+      prompt: prompt,
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: '9:16'
       }
+    });
 
-      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-      if (!downloadLink) {
-        throw new Error("Veo returned no video URI.");
-      }
-
-      const response = await fetch(`${downloadLink}&key=${apiKey}`);
-      if (!response.ok) throw new Error("Failed to download video bytes.");
-
-      const arrayBuffer = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuffer).toString('base64');
-      
-      return `data:video/mp4;base64,${base64}`;
-
-    } catch (error: any) {
-      console.error("Gemini API Error (Video):", error);
-      throw new Error(`Veo API Failure: ${error.message}`);
+    // Poll the operation until completion
+    while (!operation.done) {
+      // Small delay between polls to avoid hitting rate limits
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      operation = await ai.operations.getVideosOperation({ operation: operation });
     }
-  };
 
-  return Promise.race([
-    generatePromise(),
-    new Promise<string>((_, reject) => 
-        setTimeout(() => reject(new Error("Video Generation Timed Out.")), TIMEOUT_MS)
-    )
-  ]);
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) throw new Error("Veo operation completed but returned no video URI.");
+
+    // Fetch the raw video bytes from the signed URI
+    const res = await fetch(`${downloadLink}&key=${apiKey}`);
+    if (!res.ok) throw new Error(`Failed to download generated video: ${res.statusText}`);
+
+    const arrayBuffer = await res.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    
+    return `data:video/mp4;base64,${base64}`;
+  } catch (error: any) {
+    console.error("[generateVideo_Error]", error);
+    throw new Error(`Veo Generation Failure: ${error.message}`);
+  }
 };
