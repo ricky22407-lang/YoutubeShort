@@ -1,29 +1,36 @@
+
 import { ShortsData, IModule, ChannelConfig } from '../types';
 
 /**
- * Phase 0: Trend Searcher (Real Data)
+ * Phase 0: Trend Searcher
+ * 從 YouTube 抓取真實趨勢數據
  */
 export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
   name = "Trend Searcher";
-  description = "Fetches real top-performing Shorts from YouTube Data API.";
+  description = "從 YouTube Data API 獲取該地區真實的熱門 Shorts。";
 
   async execute(config: ChannelConfig): Promise<ShortsData[]> {
     if (typeof window !== 'undefined') {
-      console.warn("[TrendSearcher] Browser execution detected. Returning mock data.");
       return this.getMockData();
     }
 
-    // Server-side only
+    // 動態導入 googleapis 減少 cold start 崩潰機率
     const { google } = await import('googleapis');
     
-    const auth = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET
-    );
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+        console.warn("[TrendSearcher] 環境變數缺失，回傳模擬數據。");
+        return this.getMockData();
+    }
+
+    const auth = new google.auth.OAuth2(clientId, clientSecret);
     
     if (config.auth) {
         auth.setCredentials(config.auth);
     } else {
+        console.warn("[TrendSearcher] 頻道未授權，回傳模擬數據。");
         return this.getMockData();
     }
 
@@ -36,7 +43,7 @@ export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
             q: `#shorts ${keyword}`,
             type: ['video'],
             videoDuration: 'short',
-            regionCode: config.regionCode,
+            regionCode: config.regionCode || 'US',
             maxResults: 10,
             order: 'viewCount'
         });
@@ -61,7 +68,7 @@ export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
         }));
 
     } catch (error: any) {
-        console.error("[TrendSearcher] API Error:", error.message);
+        console.error("[TrendSearcher] YouTube API 錯誤:", error.message);
         return this.getMockData();
     }
   }
@@ -69,12 +76,20 @@ export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
   public getMockData(): ShortsData[] {
       return [
         {
-            id: "mock_v1",
-            title: "AI Generated Mock Video 1",
-            hashtags: ["#ai", "#future", "#shorts"],
-            view_count: 1000000,
-            region: "US",
-            view_growth_rate: 1.5
+            id: "v_trending_01",
+            title: "2025 AI Tech Trends You Need to Know",
+            hashtags: ["#ai", "#technology", "#shorts"],
+            view_count: 5200000,
+            region: "TW",
+            view_growth_rate: 1.8
+        },
+        {
+            id: "v_trending_02",
+            title: "Satisfying Experiments with Liquid Metal",
+            hashtags: ["#science", "#satisfying", "#shorts"],
+            view_count: 8900000,
+            region: "TW",
+            view_growth_rate: 2.1
         }
       ];
   }
