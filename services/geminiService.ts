@@ -6,16 +6,6 @@ const textModelId = "gemini-3-flash-preview";
 const videoModelId = "veo-3.1-fast-generate-preview";
 
 /**
- * 獲取有效的 API Key
- * Fix: Must use process.env.API_KEY exclusively according to SDK guidelines.
- */
-const getApiKey = () => {
-    const key = process.env.API_KEY;
-    if (!key) throw new Error("[GeminiService] 未偵測到 API_KEY 環境變數。");
-    return key;
-};
-
-/**
  * 核心 JSON 生成服務
  */
 export const generateJSON = async <T>(
@@ -23,8 +13,8 @@ export const generateJSON = async <T>(
   systemInstruction: string,
   responseSchema?: any
 ): Promise<T> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  // Fix: Directly use process.env.API_KEY in named parameter to ensure freshness and SDK compliance
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {
     const response = await ai.models.generateContent({
@@ -38,6 +28,7 @@ export const generateJSON = async <T>(
       },
     });
 
+    // Fix: Access .text property as a getter, not a method
     const text = response.text;
     if (!text) throw new Error("Gemini 回傳內容為空。");
 
@@ -53,10 +44,10 @@ export const generateJSON = async <T>(
  * Veo 3.1 影片生成服務 (垂直 9:16)
  */
 export const generateVideo = async (prompt: string): Promise<string> => {
-  const apiKey = getApiKey();
-  const ai = new GoogleGenAI({ apiKey });
+  // Fix: Directly use process.env.API_KEY in named parameter for Veo models
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  // Fix: Increased timeout to allow for standard video generation times (minutes)
+  // Fix: Standard timeout for video generation (up to 10 minutes)
   const MAX_POLLING_ATTEMPTS = 60; 
 
   try {
@@ -72,7 +63,7 @@ export const generateVideo = async (prompt: string): Promise<string> => {
 
     let attempts = 0;
     while (!operation.done && attempts < MAX_POLLING_ATTEMPTS) {
-      // Fix: Follow guidelines of using 10 second polling intervals
+      // Fix: Follow guidelines of using 10 second polling intervals for video generation
       await new Promise(resolve => setTimeout(resolve, 10000));
       operation = await ai.operations.getVideosOperation({operation: operation});
       attempts++;
@@ -85,7 +76,8 @@ export const generateVideo = async (prompt: string): Promise<string> => {
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
     if (!downloadLink) throw new Error("Veo 未能產出影片下載連結。");
 
-    const response = await fetch(`${downloadLink}&key=${apiKey}`);
+    // Fix: Append API key from process.env.API_KEY to the download URL
+    const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
     if (!response.ok) throw new Error("影片下載失敗。");
 
     const arrayBuffer = await response.arrayBuffer();

@@ -6,11 +6,9 @@ export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
   description = "利用 YouTube Data API 獲取真實熱門資料。";
 
   async execute(config: ChannelConfig): Promise<ShortsData[]> {
-    // 如果在瀏覽器端，直接返回模擬
     if (typeof window !== 'undefined') return this.getMockData();
 
     try {
-        // 動態載入巨大套件以提升效能
         const { google } = await import('googleapis');
         const clientId = process.env.GOOGLE_CLIENT_ID;
         const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -24,36 +22,49 @@ export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
         auth.setCredentials(config.auth);
         const service = google.youtube({ version: 'v3', auth });
 
-        const searchRes = await service.search.list({
-            part: ['snippet'],
-            q: `#shorts ${config.searchKeywords?.[0] || 'AI'}`,
-            type: ['video'],
-            regionCode: config.regionCode || 'TW',
-            maxResults: 8,
-            order: 'viewCount'
-        });
+        try {
+          const searchRes = await service.search.list({
+              part: ['snippet'],
+              q: `#shorts ${config.searchKeywords?.[0] || 'AI'}`,
+              type: ['video'],
+              regionCode: config.regionCode || 'TW',
+              maxResults: 8,
+              order: 'viewCount'
+          });
 
-        const items = searchRes.data.items || [];
-        if (items.length === 0) return this.getMockData();
+          const items = searchRes.data.items || [];
+          if (items.length === 0) return this.getMockData();
 
-        const videoIds = items.map(i => i.id?.videoId).filter(Boolean) as string[];
-        const videosRes = await service.videos.list({
-            part: ['snippet', 'statistics'],
-            id: videoIds
-        });
+          const videoIds = items.map(i => i.id?.videoId).filter(Boolean) as string[];
+          const videosRes = await service.videos.list({
+              part: ['snippet', 'statistics'],
+              id: videoIds
+          });
 
-        return (videosRes.data.items || []).map(v => ({
-            id: v.id || 'unknown',
-            title: v.snippet?.title || 'No Title',
-            hashtags: v.snippet?.tags || [],
-            view_count: parseInt(v.statistics?.viewCount || '0', 10),
-            region: config.regionCode,
-            view_growth_rate: 1.5,
-            publishedAt: v.snippet?.publishedAt || ''
-        }));
+          return (videosRes.data.items || []).map(v => ({
+              id: v.id || 'unknown',
+              title: v.snippet?.title || 'No Title',
+              hashtags: v.snippet?.tags || [],
+              view_count: parseInt(v.statistics?.viewCount || '0', 10),
+              region: config.regionCode,
+              view_growth_rate: 1.5,
+              publishedAt: v.snippet?.publishedAt || ''
+          }));
+        } catch (apiError: any) {
+          // 關鍵偵測：如果 API 未啟用，Google 會回傳 403 錯誤
+          if (apiError.errors && apiError.errors[0]?.reason === 'accessNotConfigured') {
+            const message = apiError.errors[0]?.message || "";
+            throw new Error(`CRITICAL_API_DISABLED: 您的 Google Cloud 專案尚未啟用 YouTube Data API v3。請前往 https://console.cloud.google.com/apis/library/youtube.googleapis.com 點擊「啟用」。`);
+          }
+          throw apiError;
+        }
 
     } catch (e: any) {
-        console.error("[TrendSearcher] API 失敗 (回退至模擬數據):", e.message);
+        // 如果是我們自定義的關鍵錯誤，直接往外拋讓 Pipeline 捕捉
+        if (e.message.includes("CRITICAL_API_DISABLED")) {
+          throw e;
+        }
+        console.error("[TrendSearcher] 捕捉到一般錯誤 (回退至模擬數據):", e.message);
         return this.getMockData();
     }
   }

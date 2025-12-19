@@ -10,7 +10,6 @@ const PIPELINE_STEPS = [
   { id: 'upload', label: "發布上傳階段", desc: "正在同步至 YouTube 頻道..." }
 ];
 
-// Define interfaces for ErrorBoundary props and state
 interface ErrorBoundaryProps {
   children?: ReactNode;
 }
@@ -20,9 +19,8 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-// Fix: Explicitly inherit from Component and handle state to resolve property access errors in class component
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  // Fix: Initializing state via property initializer to ensure 'state' property is recognized by compiler
+// Fix: Explicitly use React.Component to ensure props property is correctly recognized by TypeScript
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false, error: null };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState { 
@@ -30,7 +28,6 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   render() {
-    // Fix: Access state via this.state
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center p-12 font-mono">
@@ -44,7 +41,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         </div>
       );
     }
-    // Fix: Access props via this.props
+    // Fix: Correctly access children from this.props
     return this.props.children;
   }
 }
@@ -57,7 +54,6 @@ const AppContent: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [sysStatus, setSysStatus] = useState<{api_key: boolean, oauth: boolean, is_mock?: boolean} | null>(null);
   const [apiPrefix, setApiPrefix] = useState<string>('/api');
-  // Mandated API Key selection state
   const [needsApiKey, setNeedsApiKey] = useState(false);
 
   const [newChannelName, setNewChannelName] = useState("");
@@ -74,16 +70,14 @@ const AppContent: React.FC = () => {
           setApiPrefix(prefix);
           return;
         }
-      } catch (e) { /* ignore and try next */ }
+      } catch (e) { /* ignore */ }
     }
-    // 如果都失敗，啟用模擬模式
     setSysStatus({ api_key: true, oauth: true, is_mock: true });
     addLog('system', 'System', 'info', '後端 API 未回應，已自動切換至展示模擬模式。', 'INIT');
   };
 
   useEffect(() => {
     const init = async () => {
-      // MANDATORY: Check for API Key selection for Veo models
       if (typeof window !== 'undefined' && (window as any).aistudio) {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
         if (!hasKey) {
@@ -154,7 +148,17 @@ const AppContent: React.FC = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: 'analyze', channelConfig: channel })
       });
-      if (!data1.success) throw new Error(data1.error || "企劃階段失敗");
+      
+      if (!data1.success) {
+        // 特別處理 API 未啟用錯誤
+        if (data1.error && data1.error.includes("CRITICAL_API_DISABLED")) {
+            addLog(channel.id, channel.name, 'error', "❌ 關鍵錯誤：您的 YouTube API 未在 Google Cloud Console 啟用。", 'CONFIG');
+            addLog(channel.id, channel.name, 'info', "請前往啟用：https://console.cloud.google.com/apis/library/youtube.googleapis.com", 'CONFIG');
+            throw new Error("YouTube API 未啟用");
+        }
+        throw new Error(data1.error || "企劃階段失敗");
+      }
+      
       data1.logs?.forEach((l: string) => addLog(channel.id, channel.name, 'info', l, 'ANALYZE'));
 
       updateChannel(channel.id, { currentStep: 1, stepLabel: PIPELINE_STEPS[1].desc });
@@ -204,7 +208,6 @@ const AppContent: React.FC = () => {
 
   const safeFetch = async (url: string, options: any) => {
     const res = await fetch(url, options);
-    if (res.status === 404) throw new Error("API 路徑不存在 (404)。請確認伺服器已正確部署。");
     const text = await res.text();
     try {
         return JSON.parse(text);
@@ -230,7 +233,6 @@ const AppContent: React.FC = () => {
 
   if (isLoading) return <div className="min-h-screen bg-slate-950 flex items-center justify-center text-indigo-500 font-mono italic animate-pulse">BOOTING_v6_CORE...</div>;
 
-  // Render mandatory API key selection screen if required
   if (needsApiKey) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
