@@ -1,107 +1,62 @@
 
-import { TrendSearcher } from '../modules/TrendSearcher';
-import { TrendSignalExtractor } from '../modules/TrendSignalExtractor';
-import { CandidateThemeGenerator } from '../modules/CandidateThemeGenerator';
-import { CandidateWeightEngine } from '../modules/CandidateWeightEngine';
-import { PromptComposer } from '../modules/PromptComposer';
-import { VideoGenerator } from '../modules/VideoGenerator';
-import { UploaderScheduler } from '../modules/UploaderScheduler';
+import { PipelineCore } from '../services/pipelineCore';
 
 export const config = {
-  maxDuration: 60,
+  maxDuration: 120, // 增加 Veo 渲染等待時長
 };
 
 export default async function handler(req: any, res: any) {
-  // 強制設定為 JSON，防止 Vercel 回傳 HTML 錯誤頁面
   res.setHeader('Content-Type', 'application/json');
   
-  const logs: string[] = [];
-  const log = (msg: string) => logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method Not Allowed' });
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
-  }
+  const logs: string[] = [];
+  const log = (msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    logs.push(`[${time}] ${msg}`);
+    console.log(`[PIPELINE] ${msg}`);
+  };
 
   try {
     const { stage, channelConfig, metadata, videoAsset } = req.body;
     
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      throw new Error("CRITICAL_ENV_MISSING: 伺服器找不到 API_KEY。請確認 Vercel 環境變數名稱為 API_KEY。");
-    }
+    if (!process.env.API_KEY) throw new Error("缺少 API_KEY 環境變數");
 
-    // --- 階段 A: 分析與企劃 ---
+    // --- 階段處理 ---
     if (stage === 'analyze') {
-      log("執行階段: 趨勢掃描與企劃...");
-      
-      const searcher = new TrendSearcher();
-      const trends = await searcher.execute(channelConfig);
-      log(`已獲取 ${trends.length} 筆趨勢資料`);
-      
-      const extractor = new TrendSignalExtractor();
-      const signals = await extractor.execute(trends);
-      
-      const candidateGen = new CandidateThemeGenerator();
-      const candidates = await candidateGen.execute(signals);
-
-      const weightEngine = new CandidateWeightEngine();
-      const scored = await weightEngine.execute({ candidates, channelState: channelConfig.channelState });
-      const winner = scored.find(c => c.selected);
-      if (!winner) throw new Error("企劃引擎未能選出高潛力主題。");
-
-      const composer = new PromptComposer();
-      const resultMetadata = await composer.execute(winner);
-
-      return res.status(200).json({
-        success: true,
-        logs,
-        trends,
-        winner,
-        metadata: resultMetadata,
-        nextStage: 'video'
-      });
+      log("正在執行趨勢掃描...");
+      const trends = await PipelineCore.fetchTrends(channelConfig);
+      log(`分析 ${trends.length} 筆趨勢並生成企劃...`);
+      const resultMetadata = await PipelineCore.planContent(trends, channelConfig.channelState);
+      return res.status(200).json({ success: true, logs, trends, metadata: resultMetadata });
     }
 
-    // --- 階段 B: 影片生成 ---
     if (stage === 'video') {
-      log("執行階段: Veo 影片渲染...");
-      const videoGen = new VideoGenerator();
-      const resultVideo = await videoGen.execute(metadata);
-      
-      return res.status(200).json({
-        success: true,
-        logs,
-        videoAsset: resultVideo,
-        nextStage: 'upload'
-      });
+      log("正在發送 Veo 3.1 渲染請求...");
+      const resultVideo = await PipelineCore.renderVideo(metadata);
+      log("影片生成成功！");
+      return res.status(200).json({ success: true, logs, videoAsset: resultVideo });
     }
 
-    // --- 階段 C: 上傳發布 ---
     if (stage === 'upload') {
-      log("執行階段: YouTube 上傳作業...");
-      const uploader = new UploaderScheduler();
-      const uploadResult = await uploader.execute({
+      log("啟動 YouTube API 上傳程序...");
+      const result = await PipelineCore.uploadVideo({
         video_asset: videoAsset,
         metadata: metadata,
         schedule: channelConfig.schedule,
         authCredentials: channelConfig.auth
       });
-
-      return res.status(200).json({
-        success: true,
-        logs,
-        uploadId: uploadResult.video_id,
-        finalUrl: uploadResult.platform_url
-      });
+      log(`發布完成: ${result.platform_url}`);
+      return res.status(200).json({ success: true, logs, uploadId: result.video_id, finalUrl: result.platform_url });
     }
 
-    return res.status(400).json({ success: false, error: "無效的 Stage 參數" });
+    return res.status(400).json({ success: false, error: "未知的執行階段" });
 
   } catch (error: any) {
-    console.error("Pipeline Runtime Error:", error);
+    console.error("Critical Pipeline Failure:", error);
     return res.status(200).json({
       success: false,
-      error: error.message || "系統核心發生未知異常 (Runtime Error)",
+      error: `[SYSTEM_CONFLICT] ${error.message || "未知系統錯誤"}`,
       logs
     });
   }
