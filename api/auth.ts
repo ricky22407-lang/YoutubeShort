@@ -4,13 +4,17 @@ export default async function handler(req: any, res: any) {
   
   const { action } = req.query;
 
-  // 1. 環境診斷 - 協助使用者排查 API_KEY MISSING
+  // 1. 環境診斷
   if (action === 'check') {
+    const hasApiKey = !!(process.env.API_KEY || process.env.GEMINI_API_KEY);
     return res.status(200).json({
-      api_key: !!process.env.API_KEY,
-      oauth: !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET,
-      env_keys: Object.keys(process.env).filter(k => k.includes('KEY') || k.includes('ID') || k.includes('SECRET')),
-      node_env: process.env.NODE_ENV
+      api_key: hasApiKey,
+      oauth: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      env_info: {
+        timestamp: Date.now(),
+        api_key_found: hasApiKey,
+        oauth_configured: !!process.env.GOOGLE_CLIENT_ID
+      }
     });
   }
 
@@ -23,7 +27,7 @@ export default async function handler(req: any, res: any) {
     if (!CLIENT_ID || !CLIENT_SECRET) {
       return res.status(200).json({ 
         success: false, 
-        error: "伺服器環境缺失 OAuth 配置 (Client ID/Secret)。" 
+        error: "伺服器環境配置不完整 (GOOGLE_CLIENT_ID 缺失)。" 
       });
     }
 
@@ -48,6 +52,10 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ error: 'Method Not Allowed' });
 
   } catch (error: any) {
-    return res.status(200).json({ success: false, error: "Auth 模組故障: " + error.message });
+    console.error("Auth Module Error:", error);
+    return res.status(200).json({ 
+        success: false, 
+        error: "授權模組發生內部錯誤: " + (error.message || "Unknown") 
+    });
   }
 }

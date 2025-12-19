@@ -1,53 +1,54 @@
 
-import { TrendSearcher } from '../modules/TrendSearcher';
-import { TrendSignalExtractor } from '../modules/TrendSignalExtractor';
-import { CandidateThemeGenerator } from '../modules/CandidateThemeGenerator';
-import { CandidateWeightEngine } from '../modules/CandidateWeightEngine';
-import { PromptComposer } from '../modules/PromptComposer';
-import { VideoGenerator } from '../modules/VideoGenerator';
-import { UploaderScheduler } from '../modules/UploaderScheduler';
-
 export const config = {
   maxDuration: 60,
 };
 
 export default async function handler(req: any, res: any) {
+  // 強制設定為 JSON，防止 Vercel 回傳 HTML 錯誤頁面
   res.setHeader('Content-Type', 'application/json');
   
-  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method Not Allowed' });
-
-  const { stage, channelConfig, metadata, videoAsset } = req.body;
   const logs: string[] = [];
   const log = (msg: string) => logs.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
 
-  try {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) throw new Error("環境變數 API_KEY 缺失，請確保 Vercel 中已設定且已重新部署。");
+  if (req.method !== 'POST') {
+    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
+  }
 
-    // --- 階段 A: 分析與企劃 (Stages 0-4) ---
+  try {
+    const { stage, channelConfig, metadata, videoAsset } = req.body;
+    
+    // Fix: Must use process.env.API_KEY exclusively according to SDK guidelines.
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      throw new Error("CRITICAL_ENV_MISSING: 伺服器找不到 API_KEY。請確認 Vercel 環境變數名稱為 API_KEY。");
+    }
+
+    // --- 階段 A: 分析與企劃 ---
     if (stage === 'analyze') {
-      log("Phase: START - 正在執行趨勢分析與企劃編排...");
-      
+      log("正在載入分析模組...");
+      const { TrendSearcher } = await import('../modules/TrendSearcher');
+      const { TrendSignalExtractor } = await import('../modules/TrendSignalExtractor');
+      const { CandidateThemeGenerator } = await import('../modules/CandidateThemeGenerator');
+      const { CandidateWeightEngine } = await import('../modules/CandidateWeightEngine');
+      const { PromptComposer } = await import('../modules/PromptComposer');
+
+      log("Phase: START - 執行趨勢掃描...");
       const searcher = new TrendSearcher();
       const trends = await searcher.execute(channelConfig);
-      log("Phase: TRENDS - 獲取 YouTube 即時趨勢數據。");
-
+      
       const extractor = new TrendSignalExtractor();
       const signals = await extractor.execute(trends);
-      log("Phase: ANALYSIS - 演算法訊號提取完成。");
-
+      
       const candidateGen = new CandidateThemeGenerator();
       const candidates = await candidateGen.execute(signals);
 
       const weightEngine = new CandidateWeightEngine();
       const scored = await weightEngine.execute({ candidates, channelState: channelConfig.channelState });
       const winner = scored.find(c => c.selected);
-      if (!winner) throw new Error("未選出適合的主題。");
-      log(`Phase: WEIGHT - 選定主題: ${winner.subject_type}`);
+      if (!winner) throw new Error("企劃引擎未能選出高潛力主題。");
 
       const composer = new PromptComposer();
       const resultMetadata = await composer.execute(winner);
-      log("Phase: PROMPT - 影片生產指令編排完成。");
 
       return res.status(200).json({
         success: true,
@@ -59,14 +60,13 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // --- 階段 B: 影片生成 (Stage 5) ---
+    // --- 階段 B: 影片生成 ---
     if (stage === 'video') {
-      log("Phase: VEO - 正在啟動 Veo 3.1 渲染引擎...");
+      log("正在載入 Veo 渲染模組...");
+      const { VideoGenerator } = await import('../modules/VideoGenerator');
       const videoGen = new VideoGenerator();
-      // 注意：此處內部 generateVideo 已被優化為可處理長時間任務
       const resultVideo = await videoGen.execute(metadata);
-      log("Phase: VEO - 影片生成成功。");
-
+      
       return res.status(200).json({
         success: true,
         logs,
@@ -75,9 +75,10 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // --- 階段 C: 上傳發布 (Stage 6) ---
+    // --- 階段 C: 上傳發布 ---
     if (stage === 'upload') {
-      log("Phase: UPLOAD - 正在發布至 YouTube 頻道...");
+      log("正在載入 YouTube 上傳模組...");
+      const { UploaderScheduler } = await import('../modules/UploaderScheduler');
       const uploader = new UploaderScheduler();
       const uploadResult = await uploader.execute({
         video_asset: videoAsset,
@@ -85,7 +86,6 @@ export default async function handler(req: any, res: any) {
         schedule: channelConfig.schedule,
         authCredentials: channelConfig.auth
       });
-      log(`Phase: UPLOAD - 發布成功，ID: ${uploadResult.video_id}`);
 
       return res.status(200).json({
         success: true,
@@ -95,14 +95,16 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    throw new Error("未知的執行階段標記。");
+    return res.status(400).json({ success: false, error: "無效的 Stage 參數" });
 
   } catch (error: any) {
-    console.error("Pipeline Stage Error:", error);
+    console.error("Pipeline Runtime Error:", error);
+    // 確保這裡回傳的是 JSON
     return res.status(200).json({
       success: false,
-      error: error.message || "系統核心崩潰",
-      logs
+      error: error.message || "系統核心發生未知異常 (Runtime Error)",
+      logs,
+      debug_env: { has_key: !!process.env.API_KEY }
     });
   }
 }
