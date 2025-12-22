@@ -15,84 +15,71 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export default async function cronHandler(req: any, res: any) {
-  // 1. 獲取當前台北時間 (UTC+8)
+  // 強制校準台北時間
   const now = new Date();
   const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000));
-  const currentHour = twTime.getUTCHours().toString().padStart(2, '0');
-  const currentMin = twTime.getUTCMinutes().toString().padStart(2, '0');
-  const currentDay = twTime.getUTCDay();
-  const currentTime = `${currentHour}:${currentMin}`;
+  const hour = twTime.getUTCHours().toString().padStart(2, '0');
+  const min = twTime.getUTCMinutes().toString().padStart(2, '0');
+  const day = twTime.getUTCDay();
+  const currentTime = `${hour}:${min}`;
 
-  console.log(`[巡邏啟動] 時間: ${currentTime}, 星期: ${currentDay}`);
+  console.log(`[Vercel Cron] 巡邏中... 台北時間: ${currentTime}`);
 
   try {
-    // 2. 更新心跳資訊 (這會讓前端燈號變綠)
+    // 1. 紀錄巡邏脈搏
     await db.collection("system").doc("status").set({
       lastHeartbeat: admin.firestore.FieldValue.serverTimestamp(),
       engineStatus: 'online',
       lastPulseTime: currentTime
     }, { merge: true });
 
-    // 3. 掃描頻道
+    // 2. 搜尋排程頻道
     const snapshot = await db.collection("channels")
       .where("schedule.autoEnabled", "==", true)
       .get();
 
-    const results = [];
-
+    const tasks = [];
     for (const doc of snapshot.docs) {
       const chan = doc.data();
       const sched = chan.schedule;
       
-      const isDayMatch = sched.activeDays.includes(currentDay);
-      const isTimeMatch = sched.time === currentTime;
+      const isDay = sched.activeDays.includes(day);
+      const isTime = sched.time === currentTime;
       
-      // 冷卻：50 分鐘內不重跑
       const lastRun = chan.lastRunTime?.toMillis ? chan.lastRunTime.toMillis() : 0;
-      const isCooledDown = (Date.now() - lastRun) > (50 * 60 * 1000);
+      const cooledDown = (Date.now() - lastRun) > (50 * 60 * 1000);
 
-      if (isDayMatch && isTimeMatch && isCooledDown) {
-        results.push(`觸發頻道: ${chan.name}`);
-        // 啟動非同步任務
-        executePipeline(doc.id, chan);
-      } else {
-        console.log(`[跳過] ${chan.name}: 時間對不上 (${sched.time} vs ${currentTime}) 或冷卻中`);
+      if (isDay && isTime && cooledDown) {
+        console.log(`[觸發任務] 頻道: ${chan.name}`);
+        tasks.push(runTask(doc.id, chan));
       }
     }
 
-    return res.status(200).json({ 
-      success: true, 
-      currentTime, 
-      matched: results 
-    });
+    await Promise.all(tasks);
+    return res.status(200).json({ success: true, pulse: currentTime });
 
   } catch (error: any) {
+    console.error("[Cron Error]", error);
     return res.status(500).json({ error: error.message });
   }
 }
 
-// 實際執行內容 (不 await，避免超時)
-async function executePipeline(id: string, chan: any) {
+async function runTask(id: string, chan: any) {
   const ref = db.collection("channels").doc(id);
   try {
-    await ref.update({ status: 'running', lastLog: '雲端引擎開始作業...' });
+    await ref.update({ status: 'running', lastLog: '雲端自動化執行中...' });
     
-    const trends = await PipelineCore.fetchTrends(chan as any);
-    const plan = await PipelineCore.planContent(trends, { niche: chan.niche } as any);
+    const trends = await PipelineCore.fetchTrends(chan);
+    const plan = await PipelineCore.planContent(trends, chan);
     const video = await PipelineCore.renderVideo(plan);
-    const result = await PipelineCore.uploadVideo({
-      video_asset: video,
-      metadata: plan,
-      authCredentials: chan.auth,
-      schedule: { privacy_status: 'public' }
-    });
+    const result = await PipelineCore.uploadVideo({ video_asset: video, metadata: plan });
 
     await ref.update({
       status: 'success',
       lastRunTime: admin.firestore.FieldValue.serverTimestamp(),
-      lastLog: `✅ 發布成功: ${result.video_id}`
+      lastLog: `✅ 雲端自動發布成功！影片ID: ${result.video_id}`
     });
   } catch (e: any) {
-    await ref.update({ status: 'error', lastLog: `❌ 錯誤: ${e.message}` });
+    await ref.update({ status: 'error', lastLog: `❌ 雲端自動化失敗: ${e.message}` });
   }
 }
