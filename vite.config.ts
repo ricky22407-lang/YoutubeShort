@@ -4,15 +4,20 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   // 載入環境變數
-  // Fix: Cast process to any to resolve "Property 'cwd' does not exist on type 'Process'"
   const env = loadEnv(mode, (process as any).cwd(), '');
   
   return {
     plugins: [react()],
     define: {
-      // 確保在瀏覽器環境中能存取到 process.env (Vercel 風格)
-      'process.env.API_KEY': JSON.stringify(env.API_KEY),
-      'process.env': JSON.stringify(env),
+      // 這是關鍵：Vercel 需要這些定義來在前端替換環境變數
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || process.env.API_KEY),
+      'process.env.VITE_FIREBASE_API_KEY': JSON.stringify(env.VITE_FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY),
+      'process.env.VITE_FIREBASE_PROJECT_ID': JSON.stringify(env.VITE_FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID),
+      // 預留其他 Firebase 變數
+      'process.env': JSON.stringify({
+        ...env,
+        API_KEY: env.API_KEY || process.env.API_KEY
+      }),
       'global': 'window',
     },
     server: {
