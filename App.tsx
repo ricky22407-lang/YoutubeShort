@@ -63,7 +63,7 @@ const App: React.FC = () => {
     };
 
     update({ status: 'running', step: 1, lastLog: '正在分析趨勢並企劃爆款腳本...' });
-    addLog(`頻道「${channel.name}」啟動工作流...`);
+    addLog(`頻道「${channel.name}」啟動全自動流程...`);
 
     try {
       // Step 1: Analyze
@@ -76,37 +76,25 @@ const App: React.FC = () => {
       if (!d1.success) throw new Error(d1.error);
       addLog(`AI 企劃完成：${d1.metadata.title}`);
 
-      // Step 2: Render
-      update({ step: 2, lastLog: 'Veo 3.1 正在生成 9:16 高清影片 (預計 45 秒)...' });
+      // Step 2 & 3: Render & Upload (Combined)
+      update({ step: 2, lastLog: '正在生成影片並同步至 YouTube (約需 60 秒)...' });
+      addLog("Veo 3.1 渲染引擎啟動，完成後將直接發布...");
+      
       const r2 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'render', metadata: d1.metadata })
-      });
-      const d2 = await r2.json();
-      if (!d2.success) throw new Error(d2.error);
-      addLog(`Veo 影像渲染成功。`);
-
-      // Step 3: Real Upload
-      update({ step: 3, lastLog: '正在將影片推送到 YouTube 伺服器...' });
-      const r3 = await fetch('/api/pipeline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          stage: 'upload', 
+          stage: 'render_and_upload', 
           channel, 
-          videoAsset: { 
-            base64: d2.base64, 
-            title: d2.title, 
-            desc: d2.desc 
-          } 
+          metadata: d1.metadata 
         })
       });
-      const d3 = await r3.json();
-      if (!d3.success) throw new Error(d3.error);
+      
+      const d2 = await r2.json();
+      if (!d2.success) throw new Error(d2.error);
 
-      update({ status: 'success', step: 4, lastLog: `發布成功！影片 ID: ${d3.videoId}` });
-      addLog(`頻道「${channel.name}」發布成功：${d3.url}`);
+      update({ status: 'success', step: 3, lastLog: `發布成功！影片 ID: ${d2.videoId}` });
+      addLog(`[成功] 頻道「${channel.name}」已發布：${d2.url}`);
     } catch (e: any) {
       update({ status: 'error', lastLog: `失敗: ${e.message}` });
       addLog(`[錯誤] ${channel.name}: ${e.message}`);
@@ -139,14 +127,8 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col lg:flex-row">
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto space-y-6">
-            {channels.length === 0 && (
-              <div className="text-center py-32 border-2 border-dashed border-slate-800 rounded-[3rem]">
-                <p className="text-slate-500 font-medium">尚未配置自動化頻道。請從上方按鈕開始。</p>
-              </div>
-            )}
-
             {channels.map(c => (
-              <div key={c.id} className="bg-slate-900/40 border border-slate-800 rounded-[2.5rem] p-8 hover:border-indigo-500/30 transition-all">
+              <div key={c.id} className="bg-slate-900/40 border border-slate-800 rounded-[2.5rem] p-8 hover:border-indigo-500/30 transition-all shadow-2xl">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                   <div>
                     <div className="flex items-center gap-3 mb-2">
@@ -165,9 +147,9 @@ const App: React.FC = () => {
                       <button 
                         disabled={c.status === 'running'}
                         onClick={() => runPipeline(c)}
-                        className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold disabled:bg-slate-800 disabled:text-slate-600 hover:scale-105 transition-all shadow-lg"
+                        className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold disabled:bg-slate-800 disabled:text-slate-600 hover:scale-105 transition-all shadow-lg shadow-indigo-900/20"
                       >
-                        {c.status === 'running' ? '管線運行中...' : '發布真實影片'}
+                        {c.status === 'running' ? '執行中...' : '發布真實影片'}
                       </button>
                     )}
                     <button onClick={() => setChannels(channels.filter(x => x.id !== c.id))} className="p-3 bg-slate-800 text-slate-500 hover:bg-red-600 hover:text-white rounded-2xl transition-all">
@@ -177,9 +159,9 @@ const App: React.FC = () => {
                 </div>
 
                 {c.status === 'running' && (
-                  <div className="mt-8 space-y-3 animate-fade-in">
+                  <div className="mt-8 space-y-3">
                     <div className="flex justify-between text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">
-                      <span>REAL_TIME_PUBLISHING</span>
+                      <span>BACKEND_TUNNEL_ACTIVE</span>
                       <span>Progress {c.step} / 3</span>
                     </div>
                     <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden">
@@ -200,14 +182,13 @@ const App: React.FC = () => {
                 {log}
               </div>
             ))}
-            {globalLog.length === 0 && <p className="text-slate-800 px-2 italic">Waiting for activity...</p>}
           </div>
         </aside>
       </div>
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-6 z-[100]">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-[3rem] p-10 animate-slide-up shadow-2xl">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-[3rem] p-10 shadow-2xl">
             <h2 className="text-2xl font-black text-white mb-8 italic uppercase tracking-tight">Create Automation</h2>
             <div className="space-y-6">
               <div className="space-y-2">
@@ -215,12 +196,12 @@ const App: React.FC = () => {
                 <input autoFocus className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white font-bold outline-none focus:ring-2 focus:ring-indigo-600" placeholder="例如：主頻道-測試用" value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})} />
               </div>
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">內容主軸 (Niche)</label>
-                <input className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white font-bold outline-none focus:ring-2 focus:ring-indigo-600" placeholder="例如：可愛寵物、科技解說" value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})} />
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest px-1">內容主軸</label>
+                <input className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white font-bold outline-none focus:ring-2 focus:ring-indigo-600" placeholder="例如：可愛寵物" value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})} />
               </div>
               <div className="flex gap-4 pt-6">
-                <button onClick={() => setIsModalOpen(false)} className="flex-1 py-4 text-slate-500 font-bold hover:text-white">取消</button>
-                <button onClick={createChannel} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-900/20">建立</button>
+                <button onClick={() => setIsModalOpen(false)} className="flex-1 py-4 text-slate-500 font-bold">取消</button>
+                <button onClick={createChannel} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg">建立</button>
               </div>
             </div>
           </div>

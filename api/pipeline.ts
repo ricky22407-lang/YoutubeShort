@@ -3,43 +3,25 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Buffer } from 'buffer';
 
 export const config = {
-  maxDuration: 300,
-  api: { bodyParser: { sizeLimit: '25mb' } } // 提高限制以容納影片二進位數據
+  maxDuration: 300, // 增加執行時間
+  api: { bodyParser: { sizeLimit: '10mb' } } 
 };
-
-// YouTube REST 通訊輔助函數
-async function ytCall(path: string, auth: any, options: any = {}) {
-  const url = `https://www.googleapis.com/youtube/v3/${path}`;
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${auth.access_token}`,
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    throw new Error(`YouTube API Error: ${res.status} - ${txt}`);
-  }
-  return res.json();
-}
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   
-  const { stage, channel, metadata, videoAsset } = req.body;
+  const { stage, channel, metadata } = req.body;
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {
     switch (stage) {
       case 'analyze': {
-        // 1. 搜尋真實趨勢
         const q = encodeURIComponent(`#shorts ${channel.niche}`);
-        const search = await ytCall(`search?part=snippet&q=${q}&type=video&maxResults=5&order=viewCount`, channel.auth);
-        const trends = search.items.map((i: any) => i.snippet.title).join("; ");
+        // 搜尋真實趨勢 (REST)
+        const searchRes = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${q}&type=video&maxResults=5&order=viewCount&key=${process.env.API_KEY}`);
+        const searchData = await searchRes.json();
+        const trends = (searchData.items || []).map((i: any) => i.snippet.title).join("; ");
 
-        // 2. AI 企劃
         const promptRes = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
           contents: `基於趨勢「${trends}」，為「${channel.niche}」規劃一則爆款 9:16 短片。`,
@@ -59,8 +41,9 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, metadata: JSON.parse(promptRes.text || '{}') });
       }
 
-      case 'render': {
-        // 3. Veo 3.1 影像生成
+      case 'render_and_upload': {
+        // --- 階段 1: 渲染影片 ---
+        console.log("Starting Render...");
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
           prompt: metadata.prompt,
@@ -74,36 +57,24 @@ export default async function handler(req: any, res: any) {
 
         const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
         const videoRes = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
-        const buffer = await videoRes.arrayBuffer();
+        const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
         
-        // 返回 Base64 給前端顯示/傳輸到下一階段
-        return res.status(200).json({ 
-          success: true, 
-          base64: Buffer.from(buffer).toString('base64'),
-          title: metadata.title,
-          desc: metadata.desc
-        });
-      }
+        console.log("Video Rendered, Starting Upload...");
 
-      case 'upload': {
-        // 4. 真實發布：YouTube REST Multipart Upload
-        if (!videoAsset || !videoAsset.base64) throw new Error("缺少影片數據。");
-        
-        const videoBuffer = Buffer.from(videoAsset.base64, 'base64');
+        // --- 階段 2: 直接上傳至 YouTube ---
         const boundary = '-------314159265358979323846';
         const metadataPart = JSON.stringify({
           snippet: {
-            title: videoAsset.title || "AI Generated Short",
-            description: (videoAsset.desc || "") + "\n\n#shorts #ai #automation",
-            categoryId: "22" // People & Blogs
+            title: metadata.title || "AI Generated Short",
+            description: (metadata.desc || "") + "\n\n#shorts #ai #automation",
+            categoryId: "22"
           },
           status: {
-            privacyStatus: "public", // 直接設為公開，方便檢查
+            privacyStatus: "public",
             selfDeclaredMadeForKids: false
           }
         });
 
-        // 構建 Multipart Body
         const multipartBody = Buffer.concat([
           Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadataPart}\r\n`),
           Buffer.from(`--${boundary}\r\nContent-Type: video/mp4\r\n\r\n`),
@@ -122,8 +93,8 @@ export default async function handler(req: any, res: any) {
         });
 
         if (!uploadRes.ok) {
-          const err = await uploadRes.text();
-          throw new Error(`YouTube 上傳失敗: ${uploadRes.status} - ${err}`);
+          const errText = await uploadRes.text();
+          throw new Error(`YouTube 上傳失敗: ${uploadRes.status} - ${errText}`);
         }
 
         const uploadData = await uploadRes.json();
