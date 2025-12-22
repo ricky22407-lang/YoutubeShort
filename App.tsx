@@ -8,7 +8,6 @@ const App: React.FC = () => {
   const [newChan, setNewChan] = useState({ name: '', niche: 'AI 科技' });
   const [globalLog, setGlobalLog] = useState<string[]>([]);
 
-  // 1. 初始化與 OAuth 回調處理
   useEffect(() => {
     const saved = localStorage.getItem('pilot_v8_data');
     if (saved) setChannels(JSON.parse(saved));
@@ -29,7 +28,7 @@ const App: React.FC = () => {
   const addLog = (msg: string) => setGlobalLog(p => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...p].slice(0, 50));
 
   const handleTokenExchange = async (code: string, id: string) => {
-    window.history.replaceState({}, document.title, "/"); // 清除網址 code
+    window.history.replaceState({}, document.title, "/");
     localStorage.removeItem('pilot_v8_pending');
     addLog("正在完成 YouTube 安全連結...");
     
@@ -63,8 +62,8 @@ const App: React.FC = () => {
       setChannels(p => p.map(c => c.id === channel.id ? { ...c, ...up } : c));
     };
 
-    update({ status: 'running', step: 1, lastLog: '正在分析趨勢並企劃腳本...' });
-    addLog(`頻道 ${channel.name} 啟動自動化程序`);
+    update({ status: 'running', step: 1, lastLog: '正在分析趨勢並企劃爆款腳本...' });
+    addLog(`頻道「${channel.name}」啟動工作流...`);
 
     try {
       // Step 1: Analyze
@@ -75,10 +74,10 @@ const App: React.FC = () => {
       });
       const d1 = await r1.json();
       if (!d1.success) throw new Error(d1.error);
-      addLog(`企劃完成：${d1.metadata.title}`);
+      addLog(`AI 企劃完成：${d1.metadata.title}`);
 
       // Step 2: Render
-      update({ step: 2, lastLog: 'Veo 3.1 渲染引擎啟動 (預計 45s)...' });
+      update({ step: 2, lastLog: 'Veo 3.1 正在生成 9:16 高清影片 (預計 45 秒)...' });
       const r2 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -86,20 +85,28 @@ const App: React.FC = () => {
       });
       const d2 = await r2.json();
       if (!d2.success) throw new Error(d2.error);
-      addLog(`影片渲染成功。`);
+      addLog(`Veo 影像渲染成功。`);
 
-      // Step 3: Upload
-      update({ step: 3, lastLog: '正在同步至 YouTube Shorts...' });
+      // Step 3: Real Upload
+      update({ step: 3, lastLog: '正在將影片推送到 YouTube 伺服器...' });
       const r3 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'upload', channel, videoAsset: d2.base64 })
+        body: JSON.stringify({ 
+          stage: 'upload', 
+          channel, 
+          videoAsset: { 
+            base64: d2.base64, 
+            title: d2.title, 
+            desc: d2.desc 
+          } 
+        })
       });
       const d3 = await r3.json();
       if (!d3.success) throw new Error(d3.error);
 
-      update({ status: 'success', step: 4, lastLog: '已成功發布！' });
-      addLog(`頻道 ${channel.name} 任務完成。`);
+      update({ status: 'success', step: 4, lastLog: `發布成功！影片 ID: ${d3.videoId}` });
+      addLog(`頻道「${channel.name}」發布成功：${d3.url}`);
     } catch (e: any) {
       update({ status: 'error', lastLog: `失敗: ${e.message}` });
       addLog(`[錯誤] ${channel.name}: ${e.message}`);
@@ -121,7 +128,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
-      {/* Header */}
       <nav className="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-black italic shadow-lg shadow-indigo-500/20">S</div>
@@ -131,7 +137,6 @@ const App: React.FC = () => {
       </nav>
 
       <div className="flex-1 flex flex-col lg:flex-row">
-        {/* Main Content */}
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto space-y-6">
             {channels.length === 0 && (
@@ -162,7 +167,7 @@ const App: React.FC = () => {
                         onClick={() => runPipeline(c)}
                         className="px-8 py-3 bg-indigo-600 text-white rounded-2xl font-bold disabled:bg-slate-800 disabled:text-slate-600 hover:scale-105 transition-all shadow-lg"
                       >
-                        {c.status === 'running' ? '管線運行中...' : '執行全自動流程'}
+                        {c.status === 'running' ? '管線運行中...' : '發布真實影片'}
                       </button>
                     )}
                     <button onClick={() => setChannels(channels.filter(x => x.id !== c.id))} className="p-3 bg-slate-800 text-slate-500 hover:bg-red-600 hover:text-white rounded-2xl transition-all">
@@ -174,7 +179,7 @@ const App: React.FC = () => {
                 {c.status === 'running' && (
                   <div className="mt-8 space-y-3 animate-fade-in">
                     <div className="flex justify-between text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">
-                      <span>CORE_SYSTEM_ACTIVE</span>
+                      <span>REAL_TIME_PUBLISHING</span>
                       <span>Progress {c.step} / 3</span>
                     </div>
                     <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden">
@@ -187,7 +192,6 @@ const App: React.FC = () => {
           </div>
         </main>
 
-        {/* Console Logs */}
         <aside className="w-full lg:w-96 border-l border-slate-800 bg-slate-950/50 p-6 flex flex-col">
           <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 px-2">System Console</h3>
           <div className="flex-1 overflow-y-auto space-y-2 font-mono text-[11px] leading-relaxed">
@@ -201,7 +205,6 @@ const App: React.FC = () => {
         </aside>
       </div>
 
-      {/* Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-6 z-[100]">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-[3rem] p-10 animate-slide-up shadow-2xl">
