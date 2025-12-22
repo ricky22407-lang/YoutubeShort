@@ -1,4 +1,11 @@
 
+export interface ScheduleConfig {
+  activeDays: number[]; // 0-6 (Sun-Sat)
+  time: string; // "HH:mm"
+  countPerDay: number;
+  autoEnabled: boolean;
+}
+
 export interface ChannelConfig {
   id: string;
   name: string;
@@ -9,13 +16,15 @@ export interface ChannelConfig {
   step?: number;
   searchKeywords?: string[];
   regionCode?: string;
-  language?: 'zh-TW' | 'en'; // 新增語言設定
+  language?: 'zh-TW' | 'en';
+  schedule?: ScheduleConfig; // 新增排程設定
+  lastRunTime?: number; // 紀錄上次執行時間避免重複
 }
 
-export interface ChannelState {
-  niche: string;
-  avg_views: number;
-  target_audience: string;
+export interface PipelineMetadata {
+  prompt: string;
+  title: string;
+  desc: string;
 }
 
 export interface ShortsData {
@@ -28,6 +37,13 @@ export interface ShortsData {
   publishedAt?: string;
 }
 
+export interface ChannelState {
+  niche: string;
+  avg_views: number;
+  target_audience: string;
+}
+
+// Added TrendSignals interface to fix "Module '../types' has no exported member 'TrendSignals'"
 export interface TrendSignals {
   action_verb_frequency: Record<string, number>;
   subject_type_frequency: Record<string, number>;
@@ -36,6 +52,7 @@ export interface TrendSignals {
   algorithm_signal_frequency: Record<string, number>;
 }
 
+// Added CandidateTheme interface to fix "Module '../types' has no exported member 'CandidateTheme'"
 export interface CandidateTheme {
   id: string;
   subject_type: string;
@@ -53,18 +70,12 @@ export interface CandidateTheme {
   };
 }
 
-export interface PipelineMetadata {
-  prompt: string;
-  title: string;
-  desc: string;
-}
-
 export interface PromptOutput {
   candidate_id: string;
   prompt: string;
   title_template: string;
   description_template: string;
-  candidate_reference: CandidateTheme;
+  candidate_reference: any;
 }
 
 export interface VideoAsset {
@@ -76,15 +87,16 @@ export interface VideoAsset {
   base64?: string;
 }
 
+// Added UploaderInput interface to fix "Module '../types' has no exported member 'UploaderInput'"
 export interface UploaderInput {
   video_asset: VideoAsset;
   metadata: PromptOutput;
+  authCredentials?: any | null;
   schedule: {
     active: boolean;
-    privacy_status?: string;
+    privacy_status?: 'public' | 'private' | 'unlisted';
     publish_at?: string;
   };
-  authCredentials?: any;
 }
 
 export interface UploadResult {

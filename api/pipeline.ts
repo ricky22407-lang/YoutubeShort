@@ -15,39 +15,52 @@ export default async function handler(req: any, res: any) {
 
   try {
     switch (stage) {
+      case 'suggest_schedule': {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: `身為 YouTube 短影音專家，針對主題「${channel.niche}」，分析全球觀眾觀看大數據，提供最佳上片建議。
+          請產出 JSON：
+          {
+            "days": [1, 3, 5], // 0-6 代表週日至週六
+            "time": "18:30",
+            "count": 1,
+            "reason": "為什麼這個時間最好？"
+          }`,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                days: { type: Type.ARRAY, items: { type: Type.INTEGER } },
+                time: { type: Type.STRING },
+                count: { type: Type.INTEGER },
+                reason: { type: Type.STRING }
+              },
+              required: ["days", "time", "count", "reason"]
+            }
+          }
+        });
+        return res.status(200).json({ success: true, suggestion: JSON.parse(response.text || '{}') });
+      }
+
       case 'analyze': {
         const langName = channel.language === 'en' ? 'English' : '繁體中文';
         const q = encodeURIComponent(`#shorts ${channel.niche}`);
-        
-        // 搜尋真實趨勢
         const searchRes = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&q=${q}&type=video&maxResults=5&order=viewCount&key=${process.env.API_KEY}`);
         const searchData = await searchRes.json();
         const trends = (searchData.items || []).map((i: any) => i.snippet.title).join("; ");
 
         const promptRes = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
-          contents: `
-            當前趨勢參考：${trends}
-            頻道主題：${channel.niche}
-            目標語言：${langName}
-
-            任務：請規劃一則爆款 YouTube Shorts。
-            規範重點：
-            1. Title 與 Desc 必須「直接面向觀眾」，就像是你親自經營頻道的語氣。
-            2. 嚴格禁止出現任何「企劃邏輯」、「分析」、「擬人化手法」、「爆款原理」等內部說明文字。
-            3. 標題要吸睛、具備懸念，善用 Emoji。
-            4. 描述段落要自然，並包含 3-5 個自然的主題標籤（禁止出現 #ai, #automation, #bot）。
-            
-            請產出 JSON：
-          `,
+          contents: `趨勢：${trends}。主題：${channel.niche}。語言：${langName}。產出爆款企劃 JSON，標題描述要口語自然。`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                prompt: { type: Type.STRING, description: "給影片生成引擎的詳細描述" },
-                title: { type: Type.STRING, description: "純影片標題" },
-                desc: { type: Type.STRING, description: "純影片描述與標籤" }
+                prompt: { type: Type.STRING },
+                title: { type: Type.STRING },
+                desc: { type: Type.STRING }
               },
               required: ["prompt", "title", "desc"]
             }
@@ -79,10 +92,7 @@ export default async function handler(req: any, res: any) {
             description: metadata.desc || "",
             categoryId: "22"
           },
-          status: {
-            privacyStatus: "public",
-            selfDeclaredMadeForKids: false
-          }
+          status: { privacyStatus: "public", selfDeclaredMadeForKids: false }
         });
 
         const multipartBody = Buffer.concat([
@@ -96,30 +106,19 @@ export default async function handler(req: any, res: any) {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${channel.auth.access_token}`,
-            'Content-Type': `multipart/related; boundary=${boundary}`,
-            'Content-Length': multipartBody.length.toString()
+            'Content-Type': `multipart/related; boundary=${boundary}`
           },
           body: multipartBody
         });
 
-        if (!uploadRes.ok) {
-          const errText = await uploadRes.text();
-          throw new Error(`YouTube 上傳失敗: ${uploadRes.status} - ${errText}`);
-        }
-
         const uploadData = await uploadRes.json();
-        return res.status(200).json({ 
-          success: true, 
-          videoId: uploadData.id,
-          url: `https://youtube.com/shorts/${uploadData.id}` 
-        });
+        return res.status(200).json({ success: true, videoId: uploadData.id, url: `https://youtube.com/shorts/${uploadData.id}` });
       }
 
       default:
         return res.status(400).json({ error: 'Invalid Stage' });
     }
   } catch (e: any) {
-    console.error("Pipeline Error:", e.message);
     return res.status(200).json({ success: false, error: e.message });
   }
 }
