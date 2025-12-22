@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChannelConfig, ScheduleConfig, SystemStatus } from './types';
 import { db, isFirebaseConfigured } from './firebase';
-import { collection, onSnapshot, query, doc, updateDoc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { collection, onSnapshot, query, doc, updateDoc, setDoc, getDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const DEFAULT_SCHEDULE: ScheduleConfig = { 
   activeDays: [0, 1, 2, 3, 4, 5, 6], 
@@ -26,10 +26,7 @@ const App: React.FC = () => {
     schedule: { ...DEFAULT_SCHEDULE }
   });
 
-  const checkInterval = useRef<any>(null);
-
   useEffect(() => {
-    // 1. 處理 OAuth 回調
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
     if (code) handleAuthCallback(code);
@@ -37,25 +34,19 @@ const App: React.FC = () => {
     if (isFirebaseConfigured && db) {
       addLog("系統連線：Firebase 雲端同步模式。");
       
-      // 確保 system/status 文件存在，如果不存在則初始化 (解決第一次顯示 Offline 的問題)
-      initializeSystemStatus();
-
-      // 監聽全局引擎狀態
       onSnapshot(doc(db, "system", "status"), (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data();
-          // 處理 Firebase Timestamp 轉為 JS Number
-          const lastHeartbeat = data.lastHeartbeat?.toMillis ? data.lastHeartbeat.toMillis() : (data.lastHeartbeat || 0);
+          const lastHeartbeat = data.lastHeartbeat?.toMillis ? data.lastHeartbeat.toMillis() : (data.lastHeartbeat || Date.now());
           setSystemStatus({
             ...data,
             lastHeartbeat
           } as SystemStatus);
         } else {
-          addLog("⚠️ 警告：找不到雲端引擎狀態文件，請確保 Firebase Functions 已部署。");
+          setSystemStatus(null);
         }
       });
 
-      // 監聽頻道列表
       const q = query(collection(db, "channels"));
       const unsubscribe = onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(doc => ({ ...doc.data() as ChannelConfig, id: doc.id }));
@@ -69,18 +60,22 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const initializeSystemStatus = async () => {
+  const forceResetHeartbeat = async () => {
     if (!db) return;
-    const statusRef = doc(db, "system", "status");
-    const snap = await getDoc(statusRef);
-    if (!snap.exists()) {
-      addLog("正在初始化雲端監測文件...");
+    setIsSyncing(true);
+    try {
+      addLog("正在嘗試修復雲端心跳文件...");
+      const statusRef = doc(db, "system", "status");
       await setDoc(statusRef, {
-        lastHeartbeat: Date.now(),
+        lastHeartbeat: serverTimestamp(),
         engineStatus: 'online',
         activeTasks: 0
-      });
+      }, { merge: true });
+      addLog("✅ 雲端狀態已初始化！燈號應會轉綠。");
+    } catch (e: any) {
+      addLog(`❌ 修復失敗: ${e.message}。請檢查 Firestore 權限。`);
     }
+    setIsSyncing(false);
   };
 
   const handleAuthCallback = async (code: string) => {
@@ -182,7 +177,7 @@ const App: React.FC = () => {
     }
   };
 
-  const isEnginePulseActive = systemStatus && (Date.now() - systemStatus.lastHeartbeat < 180000); // 3分鐘內有心跳算 Active
+  const isEnginePulseActive = systemStatus && (Date.now() - systemStatus.lastHeartbeat < 180000);
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-200 flex flex-col font-sans">
@@ -194,7 +189,7 @@ const App: React.FC = () => {
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5">
                 <div className={`w-1.5 h-1.5 rounded-full ${isFirebaseConfigured ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
-                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{isFirebaseConfigured ? 'Cloud Brain Link' : 'Local Only'}</span>
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{isFirebaseConfigured ? 'Cloud Link' : 'Local Only'}</span>
               </div>
               <div className="flex items-center gap-1.5 border-l border-slate-800 pl-3">
                 <div className={`w-1.5 h-1.5 rounded-full ${isEnginePulseActive ? 'bg-indigo-500 animate-ping' : 'bg-rose-500'}`}></div>
@@ -217,8 +212,6 @@ const App: React.FC = () => {
               const isCloudReady = c.auth && c.schedule?.autoEnabled && c.cloudSynced && isEnginePulseActive;
               return (
                 <div key={c.id} className="bg-slate-900/60 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden group hover:border-indigo-500/40 transition-all duration-500">
-                  
-                  {/* Status Indicator Bar */}
                   <div className="absolute top-0 right-0 p-6 flex items-center gap-4">
                     <div className="flex items-center gap-2">
                        <div className={`w-2 h-2 rounded-full ${isCloudReady ? 'bg-indigo-500 animate-pulse' : 'bg-slate-700'}`}></div>
@@ -261,7 +254,7 @@ const App: React.FC = () => {
 
                       <div className="p-4 bg-slate-950/50 rounded-2xl border border-slate-800/50">
                          <p className={`text-sm font-bold ${c.status === 'running' ? 'text-indigo-400 animate-pulse' : c.status === 'error' ? 'text-rose-400' : 'text-slate-300'}`}>
-                           {c.lastLog || (isEnginePulseActive ? '等待排程時間...' : '⚠️ 請檢查雲端引擎連線')}
+                           {c.lastLog || (isEnginePulseActive ? '等待排程時間...' : '⚠️ 雲端引擎離線，暫由本地代管')}
                          </p>
                       </div>
                     </div>
@@ -306,9 +299,19 @@ const App: React.FC = () => {
                 <span className="text-[10px] font-mono text-slate-500">{systemStatus ? new Date(systemStatus.lastHeartbeat).toLocaleTimeString() : '--:--:--'}</span>
               </div>
             </div>
+            
             {!isEnginePulseActive && isFirebaseConfigured && (
-              <div className="mt-4 p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[9px] text-rose-400 font-bold leading-relaxed">
-                引擎似乎已停止運作。請確保 Firebase Cloud Function `cloudAutoPilotEngine` 已成功部署並設置為定時執行。
+              <div className="mt-4 space-y-3">
+                <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-[9px] text-rose-400 font-bold leading-relaxed">
+                  診斷：尚未偵測到雲端脈搏。這通常是因為專案中缺少 `system/status` 文件，或 Cloud Functions 未部署。
+                </div>
+                <button 
+                  onClick={forceResetHeartbeat}
+                  disabled={isSyncing}
+                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-[10px] font-black uppercase tracking-widest transition-all"
+                >
+                  {isSyncing ? '嘗試中...' : '手動修復雲端狀態文件'}
+                </button>
               </div>
             )}
           </div>
