@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChannelConfig, ScheduleConfig } from './types';
 
+// App component: Manages YouTube Shorts channels and automation workflows
 const App: React.FC = () => {
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -9,11 +10,17 @@ const App: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [storageMode, setStorageMode] = useState<'cloud' | 'local'>('cloud');
-  const pollInterval = useRef<number | null>(null);
   
+  const defaultSchedule: ScheduleConfig = { 
+    activeDays: [1, 2, 3, 4, 5], 
+    time: '19:00', 
+    countPerDay: 1, 
+    autoEnabled: true 
+  };
+
   const [newChan, setNewChan] = useState({ 
     name: '', niche: 'AI 科技', language: 'zh-TW' as 'zh-TW' | 'en',
-    schedule: { activeDays: [1, 2, 3, 4, 5], time: '19:00', countPerDay: 1, autoEnabled: true } as ScheduleConfig
+    schedule: { ...defaultSchedule }
   });
 
   const [globalLog, setGlobalLog] = useState<string[]>([]);
@@ -29,16 +36,6 @@ const App: React.FC = () => {
     if (!silent) setIsLoading(true);
     try {
       const res = await fetch(getApiUrl('/api/db?action=list'));
-      if (res.status === 404) {
-        if (storageMode !== 'local') {
-          setStorageMode('local');
-          addLog("⚠️ API 404，切換至本地儲存");
-        }
-        const localData = localStorage.getItem('onyx_local_channels');
-        setChannels(localData ? JSON.parse(localData) : []);
-        setIsLoading(false);
-        return;
-      }
       const data = await res.json();
       if (data.success) {
         setChannels(data.channels || []);
@@ -46,13 +43,15 @@ const App: React.FC = () => {
       } else {
         addLog(`❌ 雲端錯誤: ${data.error}`);
         setStorageMode('local');
+        const localData = localStorage.getItem('onyx_local_channels');
+        if (localData) setChannels(JSON.parse(localData));
       }
     } catch (e: any) {
       setStorageMode('local');
       const localData = localStorage.getItem('onyx_local_channels');
-      setChannels(localData ? JSON.parse(localData) : []);
+      if (localData) setChannels(JSON.parse(localData));
     }
-    if (!silent) setIsLoading(false);
+    setIsLoading(false);
   };
 
   useEffect(() => {
@@ -64,13 +63,15 @@ const App: React.FC = () => {
     localStorage.setItem('onyx_local_channels', JSON.stringify(updatedChannels));
     if (storageMode === 'local') return;
     try {
-      await fetch(getApiUrl('/api/db?action=sync'), {
+      const res = await fetch(getApiUrl('/api/db?action=sync'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ channels: updatedChannels })
       });
-      addLog("☁️ 雲端同步成功");
-    } catch (e) { addLog(`❌ 同步失敗`); }
+      const data = await res.json();
+      if (data.success) addLog("☁️ 雲端同步成功");
+      else addLog(`❌ 同步失敗: ${data.error}`);
+    } catch (e) { addLog(`❌ 網路錯誤`); }
   };
 
   const toggleDay = (day: number) => {
@@ -79,6 +80,17 @@ const App: React.FC = () => {
     if (index > -1) days.splice(index, 1);
     else days.push(day);
     setNewChan({ ...newChan, schedule: { ...newChan.schedule, activeDays: days.sort() } });
+  };
+
+  const handleEdit = (c: ChannelConfig) => {
+    setEditingId(c.id);
+    setNewChan({
+      name: c.name || '',
+      niche: c.niche || '',
+      language: c.language || 'zh-TW',
+      schedule: c.schedule ? { ...c.schedule } : { ...defaultSchedule }
+    });
+    setIsModalOpen(true);
   };
 
   const saveChannel = async () => {
@@ -93,7 +105,7 @@ const App: React.FC = () => {
         name: newChan.name,
         niche: newChan.niche,
         language: newChan.language,
-        schedule: { ...newChan.schedule, autoEnabled: true },
+        schedule: { ...newChan.schedule },
         history: [], auth: null, step: 0, lastLog: '待命'
       };
       next = [...channels, channel];
@@ -101,6 +113,7 @@ const App: React.FC = () => {
     await saveToDB(next);
     setIsModalOpen(false);
     setEditingId(null);
+    setNewChan({ name: '', niche: 'AI 科技', language: 'zh-TW', schedule: { ...defaultSchedule } });
   };
 
   const generateGASScript = () => {
@@ -122,7 +135,7 @@ const App: React.FC = () => {
         </div>
         <div className="flex gap-4">
            <button onClick={() => setShowGAS(true)} className="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-100 rounded-lg font-bold border border-zinc-700">GAS 部署</button>
-           <button onClick={() => { setIsModalOpen(true); setEditingId(null); }} className="px-8 py-2.5 bg-white text-black rounded-lg font-black shadow-lg">新增頻道</button>
+           <button onClick={() => { setIsModalOpen(true); setEditingId(null); setNewChan({ name: '', niche: 'AI 科技', language: 'zh-TW', schedule: { ...defaultSchedule } }); }} className="px-8 py-2.5 bg-white text-black rounded-lg font-black shadow-lg">新增頻道</button>
         </div>
       </nav>
 
@@ -132,7 +145,7 @@ const App: React.FC = () => {
             {isLoading && <div className="text-center py-20 animate-pulse text-zinc-500 font-black uppercase tracking-[0.3em]">Loading Core...</div>}
             
             {channels.map(c => (
-              <div key={c.id} className={`onyx-card rounded-[3.5rem] p-12 transition-all relative group border-zinc-700 border hover:border-zinc-500`}>
+              <div key={c.id} className="onyx-card rounded-[3.5rem] p-12 transition-all relative group border-zinc-700 border hover:border-zinc-500">
                 <div className="flex justify-between items-center">
                   <div className="space-y-6">
                     <h2 className="text-4xl font-black text-white italic uppercase">{c.name}</h2>
@@ -146,7 +159,7 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   <div className="flex gap-3">
-                     <button onClick={() => { setEditingId(c.id); setNewChan({...c} as any); setIsModalOpen(true); }} className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800 text-zinc-400 hover:text-white transition-all">編輯</button>
+                     <button onClick={() => handleEdit(c)} className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800 text-zinc-400 hover:text-white transition-all">編輯</button>
                      <button onClick={() => { if(confirm('刪除？')) saveToDB(channels.filter(x => x.id !== c.id)) }} className="p-4 bg-red-950/20 rounded-2xl border border-red-900/30 text-red-500 hover:bg-red-500 hover:text-white transition-all">刪除</button>
                   </div>
                 </div>
@@ -165,54 +178,49 @@ const App: React.FC = () => {
         </aside>
       </div>
 
-      {/* GAS Modal */}
-      {showGAS && (
-        <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-6 z-[110]">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-3xl rounded-[3rem] p-12 shadow-2xl">
-             <h2 className="text-2xl font-black text-white italic mb-6 uppercase">Google Apps Script 部署指令</h2>
-             <p className="text-zinc-400 text-sm mb-6 font-bold leading-relaxed">請將以下代碼複製到 Google Sheet 的「延伸模組 > Apps Script」中，並設定每小時執行一次的觸發器，即可達成全自動發片。</p>
-             <pre className="bg-black p-8 rounded-3xl text-cyan-400 font-mono text-xs border border-zinc-800 overflow-x-auto select-all">{generateGASScript()}</pre>
-             <button onClick={() => setShowGAS(false)} className="mt-8 w-full py-5 bg-white text-black rounded-2xl font-black uppercase tracking-widest text-xs">我知道了</button>
-          </div>
-        </div>
-      )}
-
-      {/* Settings Modal */}
+      {/* Modals */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/98 backdrop-blur-3xl flex items-center justify-center p-6 z-[100]">
-          <div className="bg-[#0a0a0a] border border-zinc-800 w-full max-w-2xl rounded-[4rem] p-16 shadow-2xl">
-             <h2 className="text-3xl font-black text-white italic uppercase mb-12 tracking-tighter">{editingId ? '編輯頻道設定' : '建立核心頻道'}</h2>
-             <div className="space-y-10">
-                <div className="grid grid-cols-2 gap-8">
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">頻道名稱</label>
-                    <input className="w-full rounded-2xl p-5 bg-black border border-zinc-800 text-white font-bold" value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})} />
-                  </div>
-                  <div className="space-y-4">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">發片時間</label>
-                    <input type="time" className="w-full rounded-2xl p-5 bg-black border border-zinc-800 text-white font-bold" value={newChan.schedule.time} onChange={e => setNewChan({...newChan, schedule: { ...newChan.schedule, time: e.target.value }})} />
-                  </div>
-                </div>
-
-                <div className="space-y-4">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">重複星期</label>
-                  <div className="flex gap-2">
-                    {['日','一','二','三','四','五','六'].map((d, i) => (
-                      <button key={i} onClick={() => toggleDay(i)} className={`flex-1 py-4 rounded-xl font-black text-xs transition-all border ${newChan.schedule.activeDays.includes(i) ? 'bg-white text-black border-white' : 'bg-transparent text-zinc-600 border-zinc-800'}`}>{d}</button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex gap-6 pt-10">
-                  <button onClick={() => setIsModalOpen(false)} className="flex-1 py-6 text-zinc-500 font-black uppercase tracking-widest text-xs">取消</button>
-                  <button onClick={saveChannel} className="flex-1 py-6 bg-white text-black rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl">儲存並同步</button>
-                </div>
-             </div>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-[2rem] p-10 space-y-8">
+            <h3 className="text-2xl font-black italic uppercase">{editingId ? '編輯頻道' : '新增頻道'}</h3>
+            <div className="space-y-4">
+              <input 
+                type="text" placeholder="頻道名稱" 
+                className="w-full bg-black border border-zinc-800 p-4 rounded-xl outline-none focus:border-white transition-all"
+                value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})}
+              />
+              <input 
+                type="text" placeholder="利基市場 (Niche)" 
+                className="w-full bg-black border border-zinc-800 p-4 rounded-xl outline-none focus:border-white transition-all"
+                value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})}
+              />
+              <select 
+                className="w-full bg-black border border-zinc-800 p-4 rounded-xl outline-none"
+                value={newChan.language} onChange={e => setNewChan({...newChan, language: e.target.value as any})}
+              >
+                <option value="zh-TW">繁體中文</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+            <div className="flex gap-4">
+              <button onClick={() => setIsModalOpen(false)} className="flex-1 p-4 bg-zinc-800 rounded-xl font-bold">取消</button>
+              <button onClick={saveChannel} className="flex-1 p-4 bg-white text-black rounded-xl font-bold">儲存</button>
+            </div>
           </div>
         </div>
       )}
 
-      <style>{`.onyx-card { background: linear-gradient(145deg, #101010, #080808); }`}</style>
+      {showGAS && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-[2rem] p-10 space-y-6">
+            <h3 className="text-2xl font-black italic uppercase">GAS 部署腳本</h3>
+            <pre className="bg-black p-6 rounded-xl text-xs font-mono text-cyan-400 overflow-x-auto">
+              {generateGASScript()}
+            </pre>
+            <button onClick={() => setShowGAS(false)} className="w-full p-4 bg-white text-black rounded-xl font-bold">關閉</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
