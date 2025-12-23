@@ -24,7 +24,7 @@ const App: React.FC = () => {
     setGlobalLog(p => [`[${now.toLocaleTimeString()}] ${msg}`, ...p].slice(0, 50));
   };
 
-  // 初始化與資料載入
+  // 初始化
   useEffect(() => {
     const init = async () => {
       const win = window as any;
@@ -33,11 +33,13 @@ const App: React.FC = () => {
       } else {
         setHasApiKey(true);
       }
+      
       const params = new URLSearchParams(window.location.search);
       const code = params.get('code');
       const pendingId = localStorage.getItem('pilot_pending_auth_id');
+      
       if (code && pendingId) {
-        addLog("🔑 偵測到授權代碼，正在對接...");
+        addLog("🔑 偵測到 YouTube 授權返還，處理中...");
         try {
           const res = await fetch('/api/auth', {
             method: 'POST',
@@ -47,13 +49,16 @@ const App: React.FC = () => {
           const data = await res.json();
           if (data.success) {
             setChannels(prev => prev.map(c => c.id === pendingId ? { ...c, auth: data.tokens } : c));
-            addLog(`✅ 授權完成。`);
+            addLog(`✅ 授權成功！核心與 YouTube 已同步。`);
             window.history.replaceState({}, document.title, window.location.pathname);
+          } else {
+            addLog(`❌ 授權失敗: ${data.error}`);
           }
-        } catch (e: any) { addLog(`❌ 授權出錯: ${e.message}`); }
+        } catch (e: any) { addLog(`❌ 網路異常: ${e.message}`); }
         localStorage.removeItem('pilot_pending_auth_id');
       }
     };
+
     const savedData = localStorage.getItem('pilot_onyx_v8_data');
     if (savedData) setChannels(JSON.parse(savedData));
     const savedEngine = localStorage.getItem('pilot_engine_active');
@@ -69,58 +74,32 @@ const App: React.FC = () => {
     localStorage.setItem('pilot_engine_active', JSON.stringify(isEngineActive));
   }, [isEngineActive]);
 
-  // 排程心跳
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!isEngineActive || isAnyChannelRendering) return;
-      const now = new Date();
-      const currentDay = now.getDay();
-      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-      const slotKey = `${currentDay}_${currentTime}`;
-
-      channelsRef.current.forEach(channel => {
-        if (channel.autoDeploy && channel.auth && channel.status !== 'running') {
-          const schedule = channel.weeklySchedule;
-          if (schedule?.days.includes(currentDay) && schedule?.times.includes(currentTime)) {
-            if (channel.lastTriggeredSlot !== slotKey) {
-              updateChannel(channel.id, { lastTriggeredSlot: slotKey });
-              addLog(`⏰ [${channel.name}] 排程啟動...`);
-              runPipeline(channel);
-            }
-          }
-        }
-      });
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [isEngineActive, isAnyChannelRendering]);
-
   const updateChannel = (id: string, up: Partial<ChannelConfig>) => {
     setChannels(prev => prev.map(c => c.id === id ? { ...c, ...up } : c));
   };
 
-  // 核彈按鈕：重置整個系統
   const systemWipe = () => {
-    if (window.confirm("【核武警告】這將刪除所有頻道核心、日誌並清空緩存，無法復原！確定要執行系統粉碎嗎？")) {
+    if (window.confirm("【物理重置警告】這會銷毀所有核心資料、授權紀錄與排程，且無法還原！確定執行？")) {
       localStorage.clear();
       setChannels([]);
-      setGlobalLog(["[SYSTEM] 執行工廠設置重置。所有數據已銷毀。"]);
       setIsEngineActive(false);
       setIsAnyChannelRendering(false);
-      window.location.reload();
+      window.location.href = window.location.pathname; // 重新載入頁面
     }
   };
 
   const killCore = (id: string) => {
     if (abortControllers.current[id]) {
       abortControllers.current[id].abort();
+      delete abortControllers.current[id];
     }
-    updateChannel(id, { status: 'idle', lastLog: '🔴 程序已被強行終止。', step: 0 });
-    setIsAnyChannelRendering(false);
-    addLog(`🛑 [${id}] 執行強制殺死 (Manual Abort)。`);
+    updateChannel(id, { status: 'idle', lastLog: '🔴 手動強行終止完成。系統重置為 Standby。', step: 0 });
+    setIsAnyChannelRendering(false); // 強制釋放全域鎖定
+    addLog(`🛑 [${id}] 物理終止成功。`);
   };
 
   const deleteChannel = (id: string) => {
-    if (window.confirm("確定要銷毀此核心？")) {
+    if (window.confirm("永久銷毀此頻道核心？")) {
       setChannels(prev => prev.filter(c => c.id !== id));
       addLog(`🗑️ 核心已移除: ${id}`);
     }
@@ -133,7 +112,7 @@ const App: React.FC = () => {
     abortControllers.current[channel.id] = controller;
 
     try {
-      updateChannel(channel.id, { status: 'running', step: 10, lastLog: '正在分析市場利基...' });
+      updateChannel(channel.id, { status: 'running', step: 10, lastLog: '正在分析市場趨勢與利基...' });
       const r1 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,7 +122,7 @@ const App: React.FC = () => {
       const d1 = await r1.json();
       if (!d1.success) throw new Error(d1.error);
       
-      updateChannel(channel.id, { step: 40, lastLog: 'Veo 生成中 (預計 3 分鐘)...' });
+      updateChannel(channel.id, { step: 40, lastLog: '正在渲染 Veo 高畫質影片 (3-5 分鐘)...' });
       const r2 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -153,11 +132,11 @@ const App: React.FC = () => {
       const d2 = await r2.json();
       if (!d2.success) throw new Error(d2.error);
 
-      addLog(`🎉 [${channel.name}] 上傳成功: ${d2.videoId}`);
+      addLog(`🎉 [${channel.name}] 上傳成功！影片 ID: ${d2.videoId}`);
       updateChannel(channel.id, { status: 'success', step: 100, lastLog: `上傳成功: ${d2.videoId}` });
     } catch (e: any) {
       if (e.name !== 'AbortError') {
-        addLog(`❌ [${channel.name}] ${e.message}`);
+        addLog(`❌ [${channel.name}] 錯誤: ${e.message}`);
         updateChannel(channel.id, { status: 'error', lastLog: e.message });
       }
     } finally {
@@ -168,14 +147,14 @@ const App: React.FC = () => {
   const editingChannel = editingCoreId ? channels.find(c => c.id === editingCoreId) : null;
 
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col font-sans selection:bg-red-500/30">
+    <div className="min-h-screen bg-black text-white flex flex-col font-sans selection:bg-cyan-500/30">
       <nav className="p-8 border-b border-zinc-900 flex justify-between items-center bg-black/80 backdrop-blur-2xl sticky top-0 z-50">
         <div className="flex items-center gap-6">
           <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black font-black italic shadow-[0_0_30px_rgba(255,255,255,0.1)]">S</div>
           <div>
-            <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">ShortsPilot <span className="text-zinc-600">Onyx v8.9.7</span></h1>
+            <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">ShortsPilot <span className="text-zinc-600">v8.9.9</span></h1>
             <div className="flex items-center gap-2 mt-2">
-              <div className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-800'}`}></div>
+              <div className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse shadow-[0_0_10px_cyan]' : 'bg-zinc-800'}`}></div>
               <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">{isEngineActive ? 'Engine Operational' : 'Engine Idle'}</span>
             </div>
           </div>
@@ -184,8 +163,8 @@ const App: React.FC = () => {
         <div className="flex items-center gap-4">
           <button onClick={systemWipe} className="px-4 py-2 text-[9px] font-black uppercase text-red-600 hover:bg-red-600/10 rounded-full transition-all tracking-[0.2em]">System Wipe</button>
           <div className="w-px h-6 bg-zinc-800 mx-2"></div>
-          <button onClick={() => setIsEngineActive(!isEngineActive)} className={`px-6 py-2 rounded-full font-black text-[9px] uppercase tracking-widest transition-all ${isEngineActive ? 'bg-cyan-500 text-black shadow-[0_0_20px_rgba(6,182,212,0.3)]' : 'bg-zinc-900 text-zinc-500 border border-zinc-800'}`}>{isEngineActive ? 'Stop Engine' : 'Start Engine'}</button>
-          <button onClick={() => { setEditingCoreId(null); setIsModalOpen(true); }} className="px-8 py-3.5 bg-white text-black rounded-full font-black text-[10px] uppercase hover:invert active:scale-95 transition-all">New Core</button>
+          <button onClick={() => setIsEngineActive(!isEngineActive)} className={`px-6 py-2 rounded-full font-black text-[9px] uppercase tracking-widest transition-all ${isEngineActive ? 'bg-cyan-500 text-black' : 'bg-zinc-900 text-zinc-500 border border-zinc-800'}`}>{isEngineActive ? 'Stop Engine' : 'Start Engine'}</button>
+          <button onClick={() => { setEditingCoreId(null); setIsModalOpen(true); }} className="px-8 py-3.5 bg-white text-black rounded-full font-black text-[10px] uppercase hover:invert active:scale-95 transition-all">Establish Core</button>
         </div>
       </nav>
 
@@ -199,14 +178,23 @@ const App: React.FC = () => {
                   <div className="flex items-center gap-4 flex-wrap">
                     <h2 className="text-3xl font-black italic uppercase tracking-tighter leading-none">{c.name}</h2>
                     <div className="flex gap-2">
-                       {c.auth ? <span className="text-[9px] font-black px-4 py-1.5 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full">CONNECTED</span> : <button onClick={() => { localStorage.setItem('pilot_pending_auth_id', c.id); window.location.href = `/api/auth?action=url`; }} className="text-[9px] font-black px-4 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full hover:bg-red-500 hover:text-white transition-all">LINK_YT</button>}
-                       <span className="text-[9px] font-black px-4 py-1.5 bg-zinc-900 text-zinc-400 border border-zinc-800 rounded-full">{c.language === 'en' ? 'ENG' : 'ZH-TW'}</span>
+                       {c.auth ? (
+                         <span className="text-[9px] font-black px-4 py-1.5 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full tracking-widest">CONNECTED</span>
+                       ) : (
+                         <button 
+                           onClick={() => { localStorage.setItem('pilot_pending_auth_id', c.id); window.location.href = `/api/auth?action=url`; }} 
+                           className="text-[9px] font-black px-4 py-1.5 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full hover:bg-red-500 hover:text-white transition-all"
+                         >
+                           LINK_YOUTUBE
+                         </button>
+                       )}
+                       <span className="text-[9px] font-black px-4 py-1.5 bg-zinc-900 text-zinc-400 border border-zinc-800 rounded-full uppercase">{c.language === 'en' ? 'ENG' : 'ZH-TW'}</span>
                     </div>
                   </div>
                   
                   <div className="flex items-center gap-8">
                     <div className="space-y-1">
-                      <label className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Niches</label>
+                      <label className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Target Niches</label>
                       <p className="text-[11px] font-black text-zinc-300 uppercase truncate max-w-[300px]">{c.niche}</p>
                     </div>
                     {c.autoDeploy && (
@@ -216,7 +204,7 @@ const App: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <p className={`text-[12px] font-bold tracking-tight max-w-lg ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>{c.lastLog || 'Core established. Standby.'}</p>
+                  <p className={`text-[12px] font-bold tracking-tight max-w-lg ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>{c.lastLog || 'System core established. Waiting for deployment.'}</p>
                 </div>
                 
                 <div className="flex flex-col gap-4 flex-shrink-0 items-end">
@@ -224,7 +212,7 @@ const App: React.FC = () => {
                     <button onClick={() => killCore(c.id)} className="px-14 py-6 bg-red-600 text-white rounded-[2.5rem] font-black text-[10px] uppercase shadow-lg active:scale-95 transition-all">Kill Core</button>
                   ) : (
                     <>
-                      <button disabled={isAnyChannelRendering || !c.auth} onClick={() => { runPipeline(c); }} className={`px-16 py-6 rounded-[2.5rem] font-black text-[10px] uppercase transition-all ${isAnyChannelRendering || !c.auth ? 'bg-zinc-900 text-zinc-700 opacity-50 cursor-not-allowed' : 'bg-white text-black hover:invert active:scale-95 shadow-xl shadow-white/5'}`}>Manual Burst</button>
+                      <button disabled={isAnyChannelRendering || !c.auth} onClick={() => { runPipeline(c); }} className={`px-16 py-6 rounded-[2.5rem] font-black text-[10px] uppercase transition-all ${isAnyChannelRendering || !c.auth ? 'bg-zinc-900 text-zinc-700 opacity-50 cursor-not-allowed shadow-none' : 'bg-white text-black hover:invert active:scale-95 shadow-xl shadow-white/5'}`}>Manual Burst</button>
                       <div className="flex gap-4">
                         <button onClick={() => { setEditingCoreId(c.id); setIsModalOpen(true); }} className="text-[9px] font-black uppercase text-zinc-500 hover:text-cyan-500 transition-colors tracking-widest">Edit Core</button>
                         <button onClick={() => deleteChannel(c.id)} className="text-[9px] font-black uppercase text-zinc-500 hover:text-red-600 transition-colors tracking-widest">Destroy</button>
@@ -235,7 +223,7 @@ const App: React.FC = () => {
               </div>
               {c.status === 'running' && (
                 <div className="mt-12 space-y-3">
-                   <div className="flex justify-between"><span className="text-[9px] font-black text-zinc-600 uppercase">Process Flow</span><span className="text-[9px] font-black text-cyan-500">{c.step}%</span></div>
+                   <div className="flex justify-between"><span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Pipeline Task</span><span className="text-[9px] font-black text-cyan-500 tracking-widest">{c.step}%</span></div>
                    <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-cyan-500 shadow-[0_0_20px_cyan]" style={{ width: `${c.step}%` }}></div></div>
                 </div>
               )}
@@ -245,10 +233,10 @@ const App: React.FC = () => {
 
         <aside className="w-full lg:w-[400px] flex flex-col h-[calc(100vh-200px)]">
           <div className="flex-1 bg-zinc-950 border border-zinc-900 rounded-[3.5rem] p-10 overflow-hidden shadow-2xl flex flex-col">
-            <h3 className="text-[10px] font-black text-zinc-700 uppercase tracking-[0.6em] text-center mb-10">Telemetry Logs</h3>
+            <h3 className="text-[10px] font-black text-zinc-700 uppercase tracking-[0.6em] text-center mb-10 italic">Telemetry Log</h3>
             <div className="flex-1 space-y-3 overflow-y-auto pr-3 custom-scrollbar font-mono text-[10px]">
               {globalLog.map((log, i) => (
-                <div key={i} className={`p-4 rounded-[1.5rem] border bg-black/40 transition-all ${log.includes('✅') || log.includes('🎉') ? 'text-cyan-400 border-cyan-900/20' : log.includes('❌') ? 'text-red-400 border-red-900/20' : 'text-zinc-500 border-zinc-900'}`}>{log}</div>
+                <div key={i} className={`p-4 rounded-[1.5rem] border bg-black/40 transition-all hover:bg-black/60 ${log.includes('✅') || log.includes('🎉') ? 'text-cyan-400 border-cyan-900/20' : log.includes('❌') ? 'text-red-400 border-red-900/20' : 'text-zinc-500 border-zinc-900'}`}>{log}</div>
               ))}
             </div>
           </div>
@@ -256,23 +244,23 @@ const App: React.FC = () => {
       </main>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/98 backdrop-blur-3xl flex items-center justify-center p-8 z-[100]">
+        <div className="fixed inset-0 bg-black/98 backdrop-blur-3xl flex items-center justify-center p-8 z-[100] animate-fade-in">
           <div className="bg-zinc-950 border border-zinc-900 w-full max-w-2xl rounded-[4rem] p-12 space-y-10 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
             <div className="text-center">
-              <h2 className="text-4xl font-black italic tracking-tighter uppercase">{editingCoreId ? 'Reconfigure Core' : 'Initialize Core'}</h2>
-              <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-[0.4em] mt-2">Update Operational Parameters</p>
+              <h2 className="text-4xl font-black italic tracking-tighter uppercase leading-none">{editingCoreId ? 'Reconfigure Core' : 'Initialize Core'}</h2>
+              <p className="text-zinc-600 text-[10px] font-bold uppercase tracking-[0.4em] mt-3">Adjust Core Parameters</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               <div className="space-y-6">
                 <div className="space-y-2 px-4">
-                  <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Label</label>
+                  <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Label Name</label>
                   <input id="n-name" className="w-full bg-zinc-900 border-none rounded-2xl p-6 text-sm font-bold outline-none focus:ring-1 focus:ring-cyan-500" defaultValue={editingChannel?.name || ''} placeholder="E.G. HARBOR_AI" />
                 </div>
                 <div className="space-y-2 px-4">
                   <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Niches (多選請以逗號分隔)</label>
-                  <input id="n-niche" className="w-full bg-zinc-900 border-none rounded-2xl p-6 text-sm font-bold outline-none focus:ring-1 focus:ring-cyan-500" defaultValue={editingChannel?.niche || ''} placeholder="貓, 狗, 袋鼠" />
-                  <p className="text-[8px] font-black text-zinc-700 uppercase tracking-widest px-2">💡 範例: 機器人, 科技, 生活</p>
+                  <input id="n-niche" className="w-full bg-zinc-900 border-none rounded-2xl p-6 text-sm font-bold outline-none focus:ring-1 focus:ring-cyan-500" defaultValue={editingChannel?.niche || ''} placeholder="貓, 狗, 機器人" />
+                  <p className="text-[8px] font-bold text-zinc-700 uppercase tracking-widest px-2">💡 範例: 生活, 科學, 運動</p>
                 </div>
                 <div className="space-y-2 px-4">
                   <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Output Language</label>
@@ -285,15 +273,15 @@ const App: React.FC = () => {
 
               <div className="space-y-6">
                 <div className="bg-zinc-900/50 p-8 rounded-[3rem] border border-zinc-900 space-y-6">
-                  <div className="flex justify-between items-center"><label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Auto Deployment</label><input id="n-auto" type="checkbox" className="w-5 h-5 accent-cyan-500" defaultChecked={editingChannel?.autoDeploy} /></div>
-                  <div className="space-y-2"><label className="text-[8px] font-black text-zinc-700 uppercase tracking-widest block">Cycle Start Time</label><input id="n-time" type="time" defaultValue={editingChannel?.weeklySchedule?.times[0] || "10:00"} className="w-full bg-black border border-zinc-800 rounded-xl p-4 text-xs font-black text-zinc-400 outline-none" /></div>
+                  <div className="flex justify-between items-center"><label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Auto Deployment</label><input id="n-auto" type="checkbox" className="w-5 h-5 accent-cyan-500 rounded bg-black" defaultChecked={editingChannel?.autoDeploy} /></div>
+                  <div className="space-y-2"><label className="text-[8px] font-black text-zinc-700 uppercase tracking-widest block">Daily Trigger Time</label><input id="n-time" type="time" defaultValue={editingChannel?.weeklySchedule?.times[0] || "10:00"} className="w-full bg-black border border-zinc-800 rounded-xl p-4 text-xs font-black text-zinc-400 outline-none" /></div>
                   <div className="space-y-3">
-                    <label className="text-[8px] font-black text-zinc-700 uppercase tracking-widest block">Active Days</label>
+                    <label className="text-[8px] font-black text-zinc-700 uppercase tracking-widest block">Operational Cycle</label>
                     <div className="flex justify-between gap-1">
                       {['S','M','T','W','T','F','S'].map((d, i) => (
                         <label key={i} className="flex-1 text-center cursor-pointer group">
                           <input type="checkbox" className="hidden peer n-days" value={i} defaultChecked={editingChannel?.weeklySchedule?.days.includes(i) ?? true} />
-                          <div className="py-2.5 rounded-lg bg-black border border-zinc-800 text-[10px] font-black text-zinc-700 peer-checked:bg-cyan-500 peer-checked:text-black transition-all">{d}</div>
+                          <div className="py-2.5 rounded-lg bg-black border border-zinc-800 text-[10px] font-black text-zinc-700 peer-checked:bg-cyan-500 peer-checked:text-black transition-all hover:border-zinc-700">{d}</div>
                         </label>
                       ))}
                     </div>
@@ -303,7 +291,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="flex gap-6 pt-4">
-              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-8 text-zinc-700 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors">Abort</button>
+              <button onClick={() => setIsModalOpen(false)} className="flex-1 py-8 text-zinc-700 font-black uppercase text-[10px] tracking-widest hover:text-white transition-colors leading-none">Abort</button>
               <button onClick={() => {
                 const name = (document.getElementById('n-name') as HTMLInputElement).value;
                 const niche = (document.getElementById('n-niche') as HTMLInputElement).value;
@@ -316,19 +304,19 @@ const App: React.FC = () => {
                 
                 if (editingCoreId) {
                   setChannels(prev => prev.map(c => c.id === editingCoreId ? { ...c, name, niche, language: lang as any, autoDeploy: auto, weeklySchedule: { days, times: [time] } } : c));
-                  addLog(`📝 [${name}] 核心配置已更新。`);
+                  addLog(`📝 [${name}] 核心重新配置完成。`);
                 } else {
                   const newCore: ChannelConfig = {
                     id: Date.now().toString(),
                     name, niche, language: lang as any, autoDeploy: auto,
                     weeklySchedule: { days, times: [time] },
-                    status: 'idle', step: 0, auth: null, lastLog: 'System initialized.'
+                    status: 'idle', step: 0, auth: null, lastLog: 'Core established.'
                   };
                   setChannels([...channels, newCore]);
-                  addLog(`✨ 新核心已建立: ${name}`);
+                  addLog(`✨ 新核心已成功初始化: ${name}`);
                 }
                 setIsModalOpen(false);
-              }} className="flex-1 py-8 bg-white text-black rounded-[2.5rem] font-black uppercase text-[10px] tracking-widest hover:scale-[1.02] active:scale-95 transition-all">
+              }} className="flex-1 py-8 bg-white text-black rounded-[2.5rem] font-black uppercase text-[10px] tracking-widest hover:scale-[1.02] active:scale-95 transition-all leading-none">
                 {editingCoreId ? 'Reconfigure' : 'Establish'}
               </button>
             </div>
