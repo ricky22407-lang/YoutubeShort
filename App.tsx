@@ -50,7 +50,6 @@ const App: React.FC = () => {
     setIsLoading(false);
   };
 
-  // 監控是否有任何頻道處於「非空閒」狀態
   useEffect(() => {
     const activeTasks = channels.some(c => c.status === 'running');
     if (activeTasks) {
@@ -62,7 +61,7 @@ const App: React.FC = () => {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
-        addLog("💤 任務追蹤結束，系統進入節能模式。");
+        addLog("💤 任務追蹤結束。");
       }
     }
     return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
@@ -76,9 +75,8 @@ const App: React.FC = () => {
     if (channel.status === 'running') return;
     addLog(`🚀 正在向雲端引擎發送任務: ${channel.name}...`);
     
-    // 預先更新 UI
     setChannels(prev => prev.map(c => 
-      c.id === channel.id ? { ...c, status: 'running', step: 5, lastLog: '正在連線雲端核心...' } : c
+      c.id === channel.id ? { ...c, status: 'running', step: 5, lastLog: '正在初始化伺服器...' } : c
     ));
 
     try {
@@ -87,23 +85,24 @@ const App: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: 'full_flow', channel })
       });
+      
       const data = await res.json();
       if (!data.success) {
-        addLog(`❌ 任務失敗: ${data.error}`);
-        fetchFromDB(true);
+        // 重要修復：如果 API 直接回傳失敗，立刻顯示在 Log 中
+        addLog(`❌ 引擎回報錯誤: ${data.error || '原因不明'}`);
+        // 強制更新 UI 狀態為 Error
+        setChannels(prev => prev.map(c => 
+          c.id === channel.id ? { ...c, status: 'error', lastLog: data.error } : c
+        ));
+      } else {
+        addLog(`✅ 任務啟動成功，請觀察進度條。`);
       }
     } catch (e: any) {
-      addLog(`❌ 連線錯誤: ${e.message}`);
-      fetchFromDB(true);
+      addLog(`❌ 網路請求失敗: ${e.message}`);
+      setChannels(prev => prev.map(c => 
+        c.id === channel.id ? { ...c, status: 'error', lastLog: '連線超時或網路錯誤' } : c
+      ));
     }
-  };
-
-  const toggleDay = (day: number) => {
-    const days = [...newChan.schedule.activeDays];
-    const index = days.indexOf(day);
-    if (index > -1) days.splice(index, 1);
-    else days.push(day);
-    setNewChan({ ...newChan, schedule: { ...newChan.schedule, activeDays: days.sort() } });
   };
 
   const handleEdit = (c: ChannelConfig) => {
@@ -126,11 +125,8 @@ const App: React.FC = () => {
       const channel: ChannelConfig = {
         id: Math.random().toString(36).substring(2, 9),
         status: 'idle',
-        name: newChan.name,
-        niche: newChan.niche,
-        language: newChan.language,
-        schedule: { ...newChan.schedule },
-        history: [], auth: null, step: 0, lastLog: '待命'
+        name: newChan.name, niche: newChan.niche, language: newChan.language,
+        schedule: { ...newChan.schedule }, history: [], auth: null, step: 0, lastLog: '待命'
       };
       next = [...channels, channel];
     }
@@ -149,28 +145,8 @@ const App: React.FC = () => {
     setIsModalOpen(false);
   };
 
-  // Fix: Added missing generateGASScript function to generate a Google Apps Script snippet for remote triggering.
   const generateGASScript = () => {
-    return `// ShortsPilot ONYX - Google Apps Script Automation
-// 1. 前往 script.google.com 建立新專案
-// 2. 貼上此程式碼並存檔
-// 3. 點擊「時鐘」圖示設定排程 (例如每小時執行一次)
-
-const WEBHOOK_URL = "${window.location.origin}/api/cron";
-const CRON_SECRET = "YOUR_VERCEL_CRON_SECRET"; // 必須與 Vercel 環境變數一致
-
-function checkAndRunPipeline() {
-  const options = {
-    method: "post",
-    headers: {
-      "Authorization": "Bearer " + CRON_SECRET
-    },
-    muteHttpExceptions: true
-  };
-  
-  const response = UrlFetchApp.fetch(WEBHOOK_URL, options);
-  Logger.log(response.getContentText());
-}`;
+    return `const WEBHOOK_URL = "${window.location.origin}/api/cron";\nconst CRON_SECRET = "YOUR_SECRET";\nfunction checkAndRun() {\n  UrlFetchApp.fetch(WEBHOOK_URL, {method:"post",headers:{"Authorization":"Bearer "+CRON_SECRET}});\n}`;
   };
 
   return (
@@ -213,10 +189,6 @@ function checkAndRunPipeline() {
                           <div key={i} className={`w-8 h-8 flex items-center justify-center rounded-lg text-[10px] font-black transition-all ${c.schedule?.activeDays.includes(i) ? 'bg-white text-black' : 'text-zinc-700 opacity-40'}`}>{d}</div>
                         ))}
                        </div>
-                       <div className="flex items-center gap-2 bg-zinc-900 px-4 py-2 rounded-xl border border-zinc-800">
-                          <span className="text-[10px] font-black text-zinc-500 uppercase">Schedule</span>
-                          <span className="font-mono text-cyan-400 font-black">{c.schedule?.time}</span>
-                       </div>
                     </div>
                   </div>
 
@@ -229,15 +201,6 @@ function checkAndRunPipeline() {
                        <span>{c.status === 'running' ? '⚙️' : '▶'}</span>
                        {c.status === 'running' ? 'Running' : 'Deploy'}
                      </button>
-                     <div className="flex flex-col gap-2">
-                        <button onClick={() => handleEdit(c)} className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800 text-zinc-500 hover:text-white transition-all text-[10px] font-black uppercase">Edit</button>
-                        <button onClick={() => { if(confirm('永久移除？')) {
-                           const next = channels.filter(x => x.id !== c.id);
-                           setChannels(next);
-                           localStorage.setItem('onyx_local_channels', JSON.stringify(next));
-                           fetch(getApiUrl('/api/db?action=sync'), { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({channels: next}) });
-                        }}} className="p-4 bg-red-950/20 rounded-2xl border border-red-900/30 text-red-700 hover:bg-red-500 hover:text-white transition-all text-[10px] font-black uppercase">Del</button>
-                     </div>
                   </div>
                 </div>
 
@@ -246,8 +209,8 @@ function checkAndRunPipeline() {
                     <div className="flex justify-between items-end">
                       <div className="space-y-2">
                         <p className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>
-                          {c.status !== 'error' && <span className="w-2 h-2 bg-cyan-500 rounded-full animate-ping"></span>}
-                          Live Mission Pulse
+                          {c.status === 'running' && <span className="w-2 h-2 bg-cyan-500 rounded-full animate-ping"></span>}
+                          Mission Pulse
                         </p>
                         <p className={`text-sm font-bold italic px-3 py-1 rounded-lg border w-fit ${c.status === 'error' ? 'bg-red-500/10 text-red-500 border-red-500/30' : 'bg-cyan-400/5 text-cyan-400 border-cyan-400/20'}`}>
                            {c.lastLog || '等待指令...'}
@@ -257,11 +220,9 @@ function checkAndRunPipeline() {
                     </div>
                     <div className="h-4 bg-black rounded-full overflow-hidden border border-zinc-800 p-1">
                       <div 
-                        className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${c.status === 'error' ? 'bg-red-600' : 'bg-gradient-to-r from-cyan-600 to-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)]'}`}
+                        className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${c.status === 'error' ? 'bg-red-600' : 'bg-gradient-to-r from-cyan-600 to-cyan-400'}`}
                         style={{ width: `${c.step || 0}%` }}
-                      >
-                        <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent)] animate-[shimmer_2s_infinite]"></div>
-                      </div>
+                      ></div>
                     </div>
                   </div>
                 )}
@@ -271,12 +232,12 @@ function checkAndRunPipeline() {
         </main>
 
         <aside className="w-96 border-l border-zinc-800 bg-[#080808] p-10 flex flex-col shadow-2xl">
-          <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.5em] mb-10">Intelligence Log</h4>
+          <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.5em] mb-10 text-center">Intelligence Log</h4>
           <div className="space-y-3 font-mono text-[9px] flex-1 overflow-y-auto pr-4 scrollbar-thin">
             {globalLog.map((log, i) => (
-              <div key={i} className="p-4 bg-[#0a0a0a] border border-zinc-900 rounded-2xl text-zinc-400 border-l-2 border-l-cyan-500/30">{log}</div>
+              <div key={i} className={`p-4 bg-[#0a0a0a] border border-zinc-900 rounded-2xl text-zinc-400 border-l-2 ${log.includes('❌') ? 'border-l-red-500 text-red-300' : 'border-l-cyan-500/30'}`}>{log}</div>
             ))}
-            {globalLog.length === 0 && <div className="text-zinc-800 italic">待機中...</div>}
+            {globalLog.length === 0 && <div className="text-zinc-800 italic text-center">Standby for Signal...</div>}
           </div>
         </aside>
       </div>
@@ -286,23 +247,8 @@ function checkAndRunPipeline() {
           <div className="bg-[#0c0c0c] border border-zinc-800 w-full max-w-xl rounded-[4rem] p-16 space-y-10 shadow-2xl">
             <h3 className="text-3xl font-black italic uppercase text-white">{editingId ? 'Modify Core' : 'Init New Core'}</h3>
             <div className="space-y-8">
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Base Identity</label>
-                <div className="grid grid-cols-2 gap-6">
-                  <input type="text" placeholder="Channel Name" className="w-full bg-black border border-zinc-800 p-6 rounded-3xl outline-none focus:border-cyan-500 transition-all text-white font-bold" value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})} />
-                  <input type="text" placeholder="Niche" className="w-full bg-black border border-zinc-800 p-6 rounded-3xl outline-none focus:border-cyan-500 transition-all text-white font-bold" value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})} />
-                </div>
-              </div>
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Frequency Plan</label>
-                <div className="flex gap-6">
-                  <input type="time" className="flex-1 bg-black border border-zinc-800 p-6 rounded-3xl outline-none focus:border-cyan-500 text-white font-mono font-bold" value={newChan.schedule.time} onChange={e => setNewChan({...newChan, schedule: { ...newChan.schedule, time: e.target.value }})} />
-                  <select className="flex-1 bg-black border border-zinc-800 p-6 rounded-3xl outline-none text-white font-bold" value={newChan.language} onChange={e => setNewChan({...newChan, language: e.target.value as any})} >
-                    <option value="zh-TW">Traditional Chinese</option>
-                    <option value="en">Global English</option>
-                  </select>
-                </div>
-              </div>
+              <input type="text" placeholder="Channel Name" className="w-full bg-black border border-zinc-800 p-6 rounded-3xl outline-none focus:border-cyan-500 transition-all text-white font-bold" value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})} />
+              <input type="text" placeholder="Niche (e.g. 貓咪、科技、美食)" className="w-full bg-black border border-zinc-800 p-6 rounded-3xl outline-none focus:border-cyan-500 transition-all text-white font-bold" value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})} />
             </div>
             <div className="flex gap-6 pt-6">
               <button onClick={() => setIsModalOpen(false)} className="flex-1 p-6 text-zinc-600 font-black uppercase tracking-widest text-[10px]">Cancel</button>
@@ -323,7 +269,6 @@ function checkAndRunPipeline() {
       )}
       <style>{`
         .onyx-card { background: linear-gradient(165deg, #0d0d0d 0%, #050505 100%); }
-        @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
       `}</style>
     </div>
   );
