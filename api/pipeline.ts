@@ -10,10 +10,47 @@ export const config = {
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   
-  const { stage, channel, metadata } = req.body;
+  const { stage, channel, metadata: inputMetadata } = req.body;
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const DB_URL = `https://${process.env.VITE_FIREBASE_PROJECT_ID}.firebaseio.com/channels.json`;
 
   try {
+    // 如果是全自動流程，我們會連續執行 Analyze -> Render -> Upload
+    if (stage === 'full_flow') {
+      console.log(`[Pipeline] 開始全自動流程: ${channel.name}`);
+      
+      // 1. Analyze
+      const analyzeRes = await fetch(`${req.headers.origin || 'http://localhost:3000'}/api/pipeline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: 'analyze', channel })
+      });
+      const { metadata } = await analyzeRes.json();
+      
+      // 2. Render and Upload
+      const renderRes = await fetch(`${req.headers.origin || 'http://localhost:3000'}/api/pipeline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: 'render_and_upload', channel, metadata })
+      });
+      const final = await renderRes.json();
+
+      // 3. 更新最後運行時間 (重要：防止重複觸發)
+      if (final.success) {
+        // 先讀取，更新，再存回
+        const currentRes = await fetch(DB_URL);
+        const all = await currentRes.json();
+        // 尋找對應索引並更新
+        const updated = Object.values(all).map((c: any) => 
+          c.id === channel.id ? { ...c, lastRunTime: Date.now(), lastLog: `✅ 發布成功: ${final.videoId}` } : c
+        );
+        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(updated) });
+      }
+
+      return res.status(200).json(final);
+    }
+
+    // 原始階段處理
     switch (stage) {
       case 'analyze': {
         const lang = channel.language || 'zh-TW';
@@ -35,9 +72,9 @@ export default async function handler(req: any, res: any) {
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                prompt: { type: Type.STRING, description: "Visual description for Veo AI" },
-                title: { type: Type.STRING, description: "Viral Title" },
-                desc: { type: Type.STRING, description: "Short description with hashtags" }
+                prompt: { type: Type.STRING },
+                title: { type: Type.STRING },
+                desc: { type: Type.STRING }
               },
               required: ["prompt", "title", "desc"]
             }
@@ -49,7 +86,7 @@ export default async function handler(req: any, res: any) {
       case 'render_and_upload': {
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
-          prompt: metadata.prompt,
+          prompt: inputMetadata.prompt,
           config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
         });
 
@@ -65,8 +102,8 @@ export default async function handler(req: any, res: any) {
         const boundary = '-------314159265358979323846';
         const metadataPart = JSON.stringify({
           snippet: {
-            title: metadata.title || "New AI Short",
-            description: metadata.desc || "",
+            title: inputMetadata.title || "New AI Short",
+            description: inputMetadata.desc || "",
             categoryId: "22"
           },
           status: { privacyStatus: "public", selfDeclaredMadeForKids: false }
