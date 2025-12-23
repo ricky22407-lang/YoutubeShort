@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ChannelConfig, ScheduleConfig } from './types';
+import { ChannelConfig, ScheduleConfig, PublicationRecord } from './types';
 
 const App: React.FC = () => {
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
@@ -124,7 +124,8 @@ const App: React.FC = () => {
         ...newChan,
         auth: null,
         status: 'idle',
-        step: 0
+        step: 0,
+        history: []
       };
       next = [...channels, c];
       addLog(`建立新頻道: ${newChan.name}`);
@@ -158,8 +159,8 @@ const App: React.FC = () => {
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto space-y-6">
             {channels.map(c => (
-              <div key={c.id} className="bg-slate-900/40 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative group hover:border-indigo-500/50 transition-all backdrop-blur-sm">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div key={c.id} className="bg-slate-900/40 border border-slate-800 rounded-[2.5rem] p-8 shadow-2xl relative group hover:border-indigo-500/50 transition-all backdrop-blur-sm overflow-hidden">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-6">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-3">
                       <h2 className="text-2xl font-black text-white leading-tight">{c.name}</h2>
@@ -201,6 +202,29 @@ const App: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* 發布歷史紀錄區塊 */}
+                {c.history && c.history.length > 0 && (
+                  <div className="mt-4 pt-6 border-t border-slate-800/60">
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 px-1 flex items-center gap-2">
+                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                       最近發布紀錄 (History)
+                    </h3>
+                    <div className="grid gap-2">
+                      {c.history.map((record, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3.5 bg-slate-950/40 rounded-2xl border border-slate-800/30 hover:border-indigo-500/30 transition-all group/record">
+                          <div className="flex flex-col">
+                            <span className="text-white text-xs font-bold truncate max-w-[200px] md:max-w-sm mb-1">{record.title}</span>
+                            <span className="text-[9px] text-slate-500 font-mono">{new Date(record.publishedAt).toLocaleString('zh-TW')}</span>
+                          </div>
+                          <a href={record.url} target="_blank" rel="noopener noreferrer" className="p-2 bg-indigo-600/10 text-indigo-400 rounded-xl hover:bg-indigo-600 hover:text-white transition-all">
+                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>

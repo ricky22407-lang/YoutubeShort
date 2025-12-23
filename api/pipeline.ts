@@ -22,6 +22,7 @@ export default async function handler(req: any, res: any) {
       const host = req.headers.host || 'localhost:3000';
       const protocol = host.includes('localhost') ? 'http' : 'https';
       
+      // 1. Analyze
       const analyzeRes = await fetch(`${protocol}://${host}/api/pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -30,6 +31,7 @@ export default async function handler(req: any, res: any) {
       const analyzeData = await analyzeRes.json();
       if (!analyzeData.success) throw new Error(analyzeData.error);
       
+      // 2. Render and Upload
       const renderRes = await fetch(`${protocol}://${host}/api/pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -38,12 +40,36 @@ export default async function handler(req: any, res: any) {
       const final = await renderRes.json();
 
       if (final.success) {
+        // 更新資料庫中的紀錄
         const currentRes = await fetch(DB_URL);
         const allData = await currentRes.json();
-        const updated = (Array.isArray(allData) ? allData : Object.values(allData)).map((c: any) => 
-          c.id === channel.id ? { ...c, lastRunTime: Date.now(), lastLog: `✅ 已發布: ${final.videoId}` } : c
-        );
-        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(updated) });
+        
+        const updated = (Array.isArray(allData) ? allData : Object.values(allData)).map((c: any) => {
+          if (c.id === channel.id) {
+            const history = c.history || [];
+            // 將新紀錄插入最前方，只保留最近 10 筆
+            history.unshift({
+              title: analyzeData.metadata.title,
+              videoId: final.videoId,
+              url: `https://youtube.com/shorts/${final.videoId}`,
+              publishedAt: new Date().toISOString()
+            });
+            
+            return { 
+              ...c, 
+              lastRunTime: Date.now(), 
+              lastLog: `✅ 已發布: ${analyzeData.metadata.title}`,
+              history: history.slice(0, 10) 
+            };
+          }
+          return c;
+        });
+        
+        await fetch(DB_URL, { 
+          method: 'PUT', 
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated) 
+        });
       }
       return res.status(200).json(final);
     }
@@ -53,7 +79,6 @@ export default async function handler(req: any, res: any) {
         const lang = channel.language || 'zh-TW';
         const targetLang = lang === 'en' ? 'English' : 'Traditional Chinese (繁體中文)';
         
-        // 使用 Gemini Search 增強
         const promptRes = await ai.models.generateContent({
           model: 'gemini-3-flash-preview',
           contents: `Niche: ${channel.niche}. Language Requirement: ${targetLang}. 
@@ -78,7 +103,6 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'render_and_upload': {
-        console.log("[Render] Starting Veo Rendering...");
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
           prompt: inputMetadata.visual_prompt,

@@ -6,6 +6,13 @@ export interface ScheduleConfig {
   autoEnabled: boolean;
 }
 
+export interface PublicationRecord {
+  title: string;
+  videoId: string;
+  url: string;
+  publishedAt: string;
+}
+
 export interface ChannelConfig {
   id: string;
   name: string;
@@ -17,8 +24,9 @@ export interface ChannelConfig {
   searchKeywords?: string[];
   regionCode?: string;
   language?: 'zh-TW' | 'en';
-  schedule?: ScheduleConfig; // 新增排程設定
-  lastRunTime?: number; // 紀錄上次執行時間避免重複
+  schedule?: ScheduleConfig;
+  lastRunTime?: number;
+  history?: PublicationRecord[]; // 儲存發布歷史紀錄
 }
 
 export interface PipelineMetadata {
@@ -43,7 +51,6 @@ export interface ChannelState {
   target_audience: string;
 }
 
-// Added TrendSignals interface to fix "Module '../types' has no exported member 'TrendSignals'"
 export interface TrendSignals {
   action_verb_frequency: Record<string, number>;
   subject_type_frequency: Record<string, number>;
@@ -52,7 +59,6 @@ export interface TrendSignals {
   algorithm_signal_frequency: Record<string, number>;
 }
 
-// Added CandidateTheme interface to fix "Module '../types' has no exported member 'CandidateTheme'"
 export interface CandidateTheme {
   id: string;
   subject_type: string;
@@ -87,7 +93,6 @@ export interface VideoAsset {
   base64?: string;
 }
 
-// Added UploaderInput interface to fix "Module '../types' has no exported member 'UploaderInput'"
 export interface UploaderInput {
   video_asset: VideoAsset;
   metadata: PromptOutput;
