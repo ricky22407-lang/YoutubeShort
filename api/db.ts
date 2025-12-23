@@ -1,40 +1,37 @@
 
-import { NextRequest, NextResponse } from 'next/server';
-
 /**
- * 簡單的 Firebase REST API 橋接器
- * 用來讓前端將頻道配置存入雲端數據庫
+ * 修正後的 Firebase REST API 橋接器
+ * 不再依賴 next/server，改用 Vercel Node.js 標準格式
  */
-export default async function handler(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const action = searchParams.get('action');
+export default async function handler(req: any, res: any) {
+  const { action } = req.query;
   const PROJECT_ID = process.env.VITE_FIREBASE_PROJECT_ID;
   const DB_URL = `https://${PROJECT_ID}.firebaseio.com/channels.json`;
 
   try {
     if (action === 'list') {
-      const res = await fetch(DB_URL);
-      const data = await res.json();
+      const dbRes = await fetch(DB_URL);
+      const data = await dbRes.json();
       const channels = data ? Object.values(data) : [];
-      return NextResponse.json({ success: true, channels });
+      return res.status(200).json({ success: true, channels });
     }
 
     if (action === 'sync' && req.method === 'POST') {
-      const { channels } = await req.json();
+      const { channels } = req.body;
       
-      // 使用 PUT 覆蓋整個 Firebase Realtime DB 路徑
       await fetch(DB_URL, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(channels)
       });
 
-      return NextResponse.json({ success: true });
+      return res.status(200).json({ success: true });
     }
 
-    return NextResponse.json({ error: 'Invalid Action' }, { status: 400 });
+    return res.status(400).json({ error: 'Invalid Action' });
 
   } catch (e: any) {
-    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
+    console.error("[DB Bridge Error]", e.message);
+    return res.status(500).json({ success: false, error: e.message });
   }
 }

@@ -15,14 +15,36 @@ export default async function handler(req: any, res: any) {
   const FIREBASE_ID = process.env.VITE_FIREBASE_PROJECT_ID;
   const DB_URL = `https://${FIREBASE_ID}.firebaseio.com/channels.json`;
 
+  const updateStatus = async (step: number, log: string, status: string = 'running') => {
+    try {
+      const currentRes = await fetch(DB_URL);
+      const allData = await currentRes.json();
+      const updated = (Array.isArray(allData) ? allData : Object.values(allData)).map((c: any) => {
+        if (c.id === channel.id) {
+          return { ...c, step, lastLog: log, status };
+        }
+        return c;
+      });
+      await fetch(DB_URL, { 
+        method: 'PUT', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated) 
+      });
+    } catch (e) {
+      console.error("Status update failed", e);
+    }
+  };
+
   try {
     if (stage === 'full_flow') {
       console.log(`[Pipeline] Headless Flow Started: ${channel.name}`);
+      await updateStatus(10, "🚀 啟動自動化流程...", 'running');
       
       const host = req.headers.host || 'localhost:3000';
       const protocol = host.includes('localhost') ? 'http' : 'https';
       
       // 1. Analyze
+      await updateStatus(20, "🔍 正在分析趨勢與生成腳本...", 'running');
       const analyzeRes = await fetch(`${protocol}://${host}/api/pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -32,6 +54,7 @@ export default async function handler(req: any, res: any) {
       if (!analyzeData.success) throw new Error(analyzeData.error);
       
       // 2. Render and Upload
+      await updateStatus(40, "🎨 腳本已完成，準備進入影片渲染階段...", 'running');
       const renderRes = await fetch(`${protocol}://${host}/api/pipeline`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -40,36 +63,36 @@ export default async function handler(req: any, res: any) {
       const final = await renderRes.json();
 
       if (final.success) {
-        // 更新資料庫中的紀錄
+        await updateStatus(100, `✅ 流程完成: ${analyzeData.metadata.title}`, 'success');
+        
+        // 更新歷史紀錄
         const currentRes = await fetch(DB_URL);
         const allData = await currentRes.json();
-        
         const updated = (Array.isArray(allData) ? allData : Object.values(allData)).map((c: any) => {
           if (c.id === channel.id) {
             const history = c.history || [];
-            // 將新紀錄插入最前方，只保留最近 10 筆
             history.unshift({
               title: analyzeData.metadata.title,
               videoId: final.videoId,
               url: `https://youtube.com/shorts/${final.videoId}`,
               publishedAt: new Date().toISOString()
             });
-            
             return { 
               ...c, 
               lastRunTime: Date.now(), 
-              lastLog: `✅ 已發布: ${analyzeData.metadata.title}`,
-              history: history.slice(0, 10) 
+              history: history.slice(0, 10),
+              step: 0 // 重置進度
             };
           }
           return c;
         });
-        
         await fetch(DB_URL, { 
           method: 'PUT', 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updated) 
         });
+      } else {
+        throw new Error(final.error);
       }
       return res.status(200).json(final);
     }
@@ -103,17 +126,24 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'render_and_upload': {
+        await updateStatus(50, "🎬 Veo 引擎啟動，正在渲染 9:16 影片 (約需 1-2 分鐘)...");
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
           prompt: inputMetadata.visual_prompt,
           config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
         });
 
+        let pollCount = 0;
         while (!operation.done) {
+          pollCount++;
+          // 模擬平滑進度增加
+          const currentStep = Math.min(85, 50 + pollCount * 5);
+          await updateStatus(currentStep, "🎬 影片渲染中，請耐心等候...");
           await new Promise(r => setTimeout(r, 12000));
           operation = await ai.operations.getVideosOperation({ operation });
         }
 
+        await updateStatus(90, "🚀 影片渲染完成，正在上傳至 YouTube...");
         const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
         const videoRes = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
         const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
@@ -155,6 +185,7 @@ export default async function handler(req: any, res: any) {
     }
   } catch (e: any) {
     console.error("[Pipeline Error]", e.message);
+    await updateStatus(0, `❌ 錯誤: ${e.message}`, 'error');
     return res.status(200).json({ success: false, error: e.message });
   }
 }
