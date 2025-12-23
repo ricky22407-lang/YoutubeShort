@@ -50,45 +50,36 @@ const App: React.FC = () => {
     setIsLoading(false);
   };
 
+  // 監控是否有任何頻道處於「非空閒」狀態
   useEffect(() => {
-    const hasActiveTask = channels.some(c => c.status === 'running');
-    if (hasActiveTask && !pollingRef.current) {
-      pollingRef.current = setInterval(() => fetchFromDB(true), 3000);
-    } else if (!hasActiveTask && pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
+    const activeTasks = channels.some(c => c.status === 'running');
+    if (activeTasks) {
+      if (!pollingRef.current) {
+        addLog("🛰️ 系統進入任務追蹤模式，啟動高頻輪詢...");
+        pollingRef.current = setInterval(() => fetchFromDB(true), 4000);
+      }
+    } else {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+        addLog("💤 任務追蹤結束，系統進入節能模式。");
+      }
     }
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, [channels]);
 
   useEffect(() => {
     fetchFromDB();
   }, []);
 
-  const saveToDB = async (updatedChannels: ChannelConfig[]) => {
-    setChannels([...updatedChannels]);
-    localStorage.setItem('onyx_local_channels', JSON.stringify(updatedChannels));
-    if (storageMode === 'local') return;
-    try {
-      await fetch(getApiUrl('/api/db?action=sync'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ channels: updatedChannels })
-      });
-    } catch (e) { addLog(`❌ 網路錯誤`); }
-  };
-
   const triggerPipeline = async (channel: ChannelConfig) => {
     if (channel.status === 'running') return;
     addLog(`🚀 正在向雲端引擎發送任務: ${channel.name}...`);
     
-    // 預先更新前端 UI 狀態
-    const optimisticUpdate = channels.map(c => 
-      c.id === channel.id ? { ...c, status: 'running' as const, step: 5, lastLog: '正在聯繫雲端核心...' } : c
-    );
-    setChannels(optimisticUpdate);
+    // 預先更新 UI
+    setChannels(prev => prev.map(c => 
+      c.id === channel.id ? { ...c, status: 'running', step: 5, lastLog: '正在連線雲端核心...' } : c
+    ));
 
     try {
       const res = await fetch(getApiUrl('/api/pipeline'), {
@@ -98,12 +89,11 @@ const App: React.FC = () => {
       });
       const data = await res.json();
       if (!data.success) {
-        addLog(`❌ 雲端拒絕任務: ${data.error}`);
-        // 錯誤時強制重整以獲取錯誤日誌
+        addLog(`❌ 任務失敗: ${data.error}`);
         fetchFromDB(true);
       }
     } catch (e: any) {
-      addLog(`❌ 連線中斷: ${e.message}`);
+      addLog(`❌ 連線錯誤: ${e.message}`);
       fetchFromDB(true);
     }
   };
@@ -144,15 +134,43 @@ const App: React.FC = () => {
       };
       next = [...channels, channel];
     }
-    await saveToDB(next);
+    
+    setChannels([...next]);
+    localStorage.setItem('onyx_local_channels', JSON.stringify(next));
+    if (storageMode === 'cloud') {
+      try {
+        await fetch(getApiUrl('/api/db?action=sync'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ channels: next })
+        });
+      } catch (e) { addLog(`❌ 同步至雲端失敗`); }
+    }
     setIsModalOpen(false);
-    setEditingId(null);
-    setNewChan({ name: '', niche: 'AI 科技', language: 'zh-TW', schedule: { ...defaultSchedule } });
   };
 
+  // Fix: Added missing generateGASScript function to generate a Google Apps Script snippet for remote triggering.
   const generateGASScript = () => {
-    const baseUrl = window.location.origin;
-    return `// ONYX Elite Automation Script\nfunction onyxHeartbeat() {\n  const API = "${baseUrl}/api/pipeline";\n  console.log("Checking channels at " + API);\n}`.trim();
+    return `// ShortsPilot ONYX - Google Apps Script Automation
+// 1. 前往 script.google.com 建立新專案
+// 2. 貼上此程式碼並存檔
+// 3. 點擊「時鐘」圖示設定排程 (例如每小時執行一次)
+
+const WEBHOOK_URL = "${window.location.origin}/api/cron";
+const CRON_SECRET = "YOUR_VERCEL_CRON_SECRET"; // 必須與 Vercel 環境變數一致
+
+function checkAndRunPipeline() {
+  const options = {
+    method: "post",
+    headers: {
+      "Authorization": "Bearer " + CRON_SECRET
+    },
+    muteHttpExceptions: true
+  };
+  
+  const response = UrlFetchApp.fetch(WEBHOOK_URL, options);
+  Logger.log(response.getContentText());
+}`;
   };
 
   return (
@@ -176,7 +194,7 @@ const App: React.FC = () => {
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto space-y-12">
-            {isLoading && <div className="text-center py-20 animate-pulse text-zinc-500 font-black uppercase tracking-[0.3em]">Connecting to Onyx Grid...</div>}
+            {isLoading && <div className="text-center py-20 animate-pulse text-zinc-500 font-black uppercase tracking-[0.3em]">Syncing with Grid...</div>}
             
             {channels.map(c => (
               <div key={c.id} className="onyx-card rounded-[3.5rem] p-12 transition-all relative group border-zinc-800 border hover:border-cyan-900/50 shadow-2xl">
@@ -185,18 +203,18 @@ const App: React.FC = () => {
                     <div className="flex items-center gap-4">
                       <h2 className="text-4xl font-black text-white italic uppercase tracking-tighter">{c.name}</h2>
                       <span className={`text-[9px] px-3 py-1 rounded-full font-black uppercase tracking-widest ${c.status === 'running' ? 'bg-cyan-500 text-black animate-pulse' : c.status === 'error' ? 'bg-red-500 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
-                        {c.status === 'running' ? 'Mission Active' : c.status === 'error' ? 'System Error' : 'Standby'}
+                        {c.status === 'running' ? 'Active' : c.status === 'error' ? 'Failed' : 'Standby'}
                       </span>
                     </div>
                     
                     <div className="flex gap-4 items-center">
-                       <div className="flex bg-black/50 p-2 rounded-xl border border-zinc-800 shadow-inner">
+                       <div className="flex bg-black/50 p-2 rounded-xl border border-zinc-800">
                         {['日','一','二','三','四','五','六'].map((d, i) => (
-                          <div key={i} className={`w-8 h-8 flex items-center justify-center rounded-lg text-[10px] font-black transition-all ${c.schedule?.activeDays.includes(i) ? 'bg-white text-black scale-110 shadow-lg' : 'text-zinc-700 opacity-40'}`}>{d}</div>
+                          <div key={i} className={`w-8 h-8 flex items-center justify-center rounded-lg text-[10px] font-black transition-all ${c.schedule?.activeDays.includes(i) ? 'bg-white text-black' : 'text-zinc-700 opacity-40'}`}>{d}</div>
                         ))}
                        </div>
                        <div className="flex items-center gap-2 bg-zinc-900 px-4 py-2 rounded-xl border border-zinc-800">
-                          <span className="text-[10px] font-black text-zinc-500 uppercase">Target Time</span>
+                          <span className="text-[10px] font-black text-zinc-500 uppercase">Schedule</span>
                           <span className="font-mono text-cyan-400 font-black">{c.schedule?.time}</span>
                        </div>
                     </div>
@@ -206,33 +224,40 @@ const App: React.FC = () => {
                      <button 
                       onClick={() => triggerPipeline(c)}
                       disabled={c.status === 'running'}
-                      className={`group flex items-center gap-3 px-10 py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all ${c.status === 'running' ? 'bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-800' : 'bg-cyan-500 text-black hover:scale-105 hover:bg-cyan-400 active:scale-95 shadow-[0_0_30px_rgba(6,182,212,0.3)]'}`}
+                      className={`group flex items-center gap-3 px-10 py-6 rounded-3xl font-black uppercase tracking-widest text-xs transition-all ${c.status === 'running' ? 'bg-zinc-900 text-zinc-600 cursor-not-allowed border border-zinc-800' : 'bg-cyan-500 text-black hover:scale-105 shadow-[0_0_30px_rgba(6,182,212,0.3)]'}`}
                      >
-                       <span className={c.status === 'running' ? 'animate-spin' : ''}>{c.status === 'running' ? '⚙️' : '▶'}</span>
-                       {c.status === 'running' ? 'Active' : 'Deploy'}
+                       <span>{c.status === 'running' ? '⚙️' : '▶'}</span>
+                       {c.status === 'running' ? 'Running' : 'Deploy'}
                      </button>
                      <div className="flex flex-col gap-2">
-                        <button onClick={() => handleEdit(c)} className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800 text-zinc-500 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest">Edit</button>
-                        <button onClick={() => { if(confirm('永久移除？')) saveToDB(channels.filter(x => x.id !== c.id)) }} className="p-4 bg-red-950/20 rounded-2xl border border-red-900/30 text-red-700 hover:bg-red-500 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest">Del</button>
+                        <button onClick={() => handleEdit(c)} className="p-4 bg-zinc-900 rounded-2xl border border-zinc-800 text-zinc-500 hover:text-white transition-all text-[10px] font-black uppercase">Edit</button>
+                        <button onClick={() => { if(confirm('永久移除？')) {
+                           const next = channels.filter(x => x.id !== c.id);
+                           setChannels(next);
+                           localStorage.setItem('onyx_local_channels', JSON.stringify(next));
+                           fetch(getApiUrl('/api/db?action=sync'), { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({channels: next}) });
+                        }}} className="p-4 bg-red-950/20 rounded-2xl border border-red-900/30 text-red-700 hover:bg-red-500 hover:text-white transition-all text-[10px] font-black uppercase">Del</button>
                      </div>
                   </div>
                 </div>
 
-                {(c.status === 'running' || (c.step || 0) > 0) && (
+                {(c.status === 'running' || c.status === 'error' || (c.step || 0) > 0) && (
                   <div className="mt-10 pt-10 border-t border-zinc-800/50 space-y-6">
                     <div className="flex justify-between items-end">
                       <div className="space-y-2">
-                        <p className="text-[10px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                          <span className="w-2 h-2 bg-cyan-500 rounded-full animate-ping"></span>
+                        <p className={`text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>
+                          {c.status !== 'error' && <span className="w-2 h-2 bg-cyan-500 rounded-full animate-ping"></span>}
                           Live Mission Pulse
                         </p>
-                        <p className="text-sm font-bold text-cyan-400 italic bg-cyan-400/5 px-3 py-1 rounded-lg border border-cyan-400/20 w-fit">{c.lastLog || '等待指令...'}</p>
+                        <p className={`text-sm font-bold italic px-3 py-1 rounded-lg border w-fit ${c.status === 'error' ? 'bg-red-500/10 text-red-500 border-red-500/30' : 'bg-cyan-400/5 text-cyan-400 border-cyan-400/20'}`}>
+                           {c.lastLog || '等待指令...'}
+                        </p>
                       </div>
                       <span className="text-3xl font-black font-mono text-white italic tracking-tighter">{c.step || 0}%</span>
                     </div>
                     <div className="h-4 bg-black rounded-full overflow-hidden border border-zinc-800 p-1">
                       <div 
-                        className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 rounded-full transition-all duration-700 ease-out shadow-[0_0_15px_rgba(6,182,212,0.5)] relative overflow-hidden"
+                        className={`h-full rounded-full transition-all duration-700 ease-out relative overflow-hidden ${c.status === 'error' ? 'bg-red-600' : 'bg-gradient-to-r from-cyan-600 to-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.5)]'}`}
                         style={{ width: `${c.step || 0}%` }}
                       >
                         <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.2),transparent)] animate-[shimmer_2s_infinite]"></div>
@@ -249,9 +274,9 @@ const App: React.FC = () => {
           <h4 className="text-[10px] font-black text-zinc-500 uppercase tracking-[0.5em] mb-10">Intelligence Log</h4>
           <div className="space-y-3 font-mono text-[9px] flex-1 overflow-y-auto pr-4 scrollbar-thin">
             {globalLog.map((log, i) => (
-              <div key={i} className="p-4 bg-[#0a0a0a] border border-zinc-900 rounded-2xl text-zinc-400 border-l-2 border-l-cyan-500/30 animate-fade-in">{log}</div>
+              <div key={i} className="p-4 bg-[#0a0a0a] border border-zinc-900 rounded-2xl text-zinc-400 border-l-2 border-l-cyan-500/30">{log}</div>
             ))}
-            {globalLog.length === 0 && <div className="text-zinc-800 italic">No mission logs available.</div>}
+            {globalLog.length === 0 && <div className="text-zinc-800 italic">待機中...</div>}
           </div>
         </aside>
       </div>
@@ -259,7 +284,7 @@ const App: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[100] flex items-center justify-center p-6">
           <div className="bg-[#0c0c0c] border border-zinc-800 w-full max-w-xl rounded-[4rem] p-16 space-y-10 shadow-2xl">
-            <h3 className="text-3xl font-black italic uppercase tracking-tighter text-white">{editingId ? 'Modify Core' : 'Init New Core'}</h3>
+            <h3 className="text-3xl font-black italic uppercase text-white">{editingId ? 'Modify Core' : 'Init New Core'}</h3>
             <div className="space-y-8">
               <div className="space-y-3">
                 <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Base Identity</label>
@@ -278,18 +303,10 @@ const App: React.FC = () => {
                   </select>
                 </div>
               </div>
-              <div className="space-y-4">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Cycle Strategy</label>
-                <div className="flex gap-3">
-                  {['S','M','T','W','T','F','S'].map((d, i) => (
-                    <button key={i} onClick={() => toggleDay(i)} className={`flex-1 py-5 rounded-2xl font-black text-xs transition-all border ${newChan.schedule.activeDays.includes(i) ? 'bg-white text-black border-white shadow-lg scale-105' : 'bg-transparent text-zinc-600 border-zinc-800 hover:border-zinc-500'}`} > {d} </button>
-                  ))}
-                </div>
-              </div>
             </div>
             <div className="flex gap-6 pt-6">
               <button onClick={() => setIsModalOpen(false)} className="flex-1 p-6 text-zinc-600 font-black uppercase tracking-widest text-[10px]">Cancel</button>
-              <button onClick={saveChannel} className="flex-1 p-7 bg-white text-black rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-2xl hover:scale-[1.05] transition-all">Establish Channel</button>
+              <button onClick={saveChannel} className="flex-1 p-7 bg-white text-black rounded-[2rem] font-black uppercase tracking-widest text-[10px] shadow-2xl hover:scale-105 transition-all">Save Change</button>
             </div>
           </div>
         </div>
@@ -298,19 +315,15 @@ const App: React.FC = () => {
       {showGAS && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl z-[110] flex items-center justify-center p-6">
           <div className="bg-[#0c0c0c] border border-zinc-800 w-full max-w-3xl rounded-[4rem] p-16 space-y-10 shadow-2xl">
-            <h3 className="text-2xl font-black italic uppercase text-white">Google Apps Script Deployment</h3>
-            <p className="text-zinc-500 text-sm font-bold leading-relaxed uppercase tracking-tight">Deploy to Apps Script with Hourly Trigger for Full Automation.</p>
-            <pre className="bg-black p-10 rounded-[2.5rem] text-xs font-mono text-cyan-400 overflow-x-auto border border-zinc-900 select-all shadow-inner">{generateGASScript()}</pre>
-            <button onClick={() => setShowGAS(false)} className="w-full p-8 bg-white text-black rounded-3xl font-black uppercase tracking-widest text-xs">Acknowledge</button>
+            <h3 className="text-2xl font-black italic uppercase text-white tracking-widest">Deployment Console</h3>
+            <pre className="bg-black p-10 rounded-[2.5rem] text-xs font-mono text-cyan-400 border border-zinc-900 overflow-x-auto select-all">{generateGASScript()}</pre>
+            <button onClick={() => setShowGAS(false)} className="w-full p-8 bg-white text-black rounded-3xl font-black uppercase text-xs">Dismiss</button>
           </div>
         </div>
       )}
       <style>{`
         .onyx-card { background: linear-gradient(165deg, #0d0d0d 0%, #050505 100%); }
-        @keyframes shimmer {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(100%); }
-        }
+        @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
       `}</style>
     </div>
   );

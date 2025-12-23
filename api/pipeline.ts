@@ -11,10 +11,12 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
   
   const { stage, channel } = req.body;
+  if (!channel || !channel.id) return res.status(400).json({ error: 'Missing channel ID' });
+
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const ID_OR_URL = (process.env.VITE_FIREBASE_PROJECT_ID || process.env.FIREBASE_PROJECT_ID || '').trim();
 
-  // 統一的資料庫路徑構造器 (與 api/db.ts 保持一致)
+  // 統一的路徑構造器
   const getFullUrl = (input: string) => {
     if (input.startsWith('http')) {
       return input.endsWith('.json') ? input : `${input.endsWith('/') ? input : input + '/'}channels.json`;
@@ -22,45 +24,43 @@ export default async function handler(req: any, res: any) {
     if (!input.includes('-default-rtdb') && !input.includes('.')) {
       return `https://${input}-default-rtdb.firebaseio.com/channels.json`;
     }
-    if (input.includes('.')) {
-      const parts = input.split('.');
-      return `https://${parts[0]}.${parts[1]}.firebasedatabase.app/channels.json`;
-    }
     return `https://${input}.firebaseio.com/channels.json`;
   };
 
   const DB_URL = getFullUrl(ID_OR_URL);
 
-  // 輔助函式：更新 Firebase 狀態
+  // 強化後的狀態更新函式
   const updateStatus = async (step: number, log: string, status: string = 'running') => {
     try {
+      console.log(`[ONYX LOG] ${channel.name}: ${log} (${step}%)`);
       const currentRes = await fetch(DB_URL);
-      if (!currentRes.ok) return; // 忽略更新錯誤以繼續流程
       const allData = await currentRes.json();
-      const channels = Array.isArray(allData) ? allData : (allData ? Object.values(allData) : []);
+      
+      let channels = Array.isArray(allData) ? allData : (allData ? Object.values(allData) : []);
       const updated = channels.map((c: any) => 
         c.id === channel.id ? { ...c, step, lastLog: log, status } : c
       );
-      await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(updated) });
-    } catch (e) { console.error("Update fail", e); }
+      
+      await fetch(DB_URL, { 
+        method: 'PUT', 
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated) 
+      });
+    } catch (e) {
+      console.error("[Update Status Failed]", e);
+    }
   };
 
   try {
     if (stage === 'full_flow') {
-      await updateStatus(10, "🚀 啟動 Onyx 自動化流程...");
+      await updateStatus(15, "🔍 正在聯繫 Gemini 分析趨勢...");
       
-      // 1. Analyze
-      await updateStatus(20, "🔍 分析趨勢與撰寫劇本中...");
-      const lang = channel.language || 'zh-TW';
-      const targetLang = lang === 'en' ? 'English' : 'Traditional Chinese (繁體中文)';
+      const targetLang = channel.language === 'en' ? 'English' : 'Traditional Chinese (繁體中文)';
       
+      // 1. 生成劇本
       const promptRes = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Niche: ${channel.niche}. Language Requirement: ${targetLang}. 
-        Create a viral YouTube Short plan. Output must be raw JSON.
-        - title: must be in ${targetLang}.
-        - description: must be in ${targetLang}.
-        - visual_prompt: English only.`,
+        contents: `Niche: ${channel.niche}. Language: ${targetLang}. Create a viral YouTube Short.`,
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -74,10 +74,21 @@ export default async function handler(req: any, res: any) {
           }
         }
       });
-      const metadata = JSON.parse(promptRes.text || '{}');
 
-      // 2. Render (Veo 渲染可能較慢，在此增加進度點)
-      await updateStatus(40, "🎬 影片渲染中 (Veo 3.1 雲端排隊)...");
+      let metadata;
+      try {
+        // 清理可能存在的 Markdown 標籤
+        const cleanJson = (promptRes.text || '{}').replace(/```json/g, '').replace(/```/g, '').trim();
+        metadata = JSON.parse(cleanJson);
+      } catch (parseErr) {
+        throw new Error("Gemini 回傳了無效的 JSON 格式。內容: " + promptRes.text?.substring(0, 50));
+      }
+
+      if (!metadata.visual_prompt) throw new Error("劇本內容生成失敗。");
+
+      // 2. 影片渲染 (Veo)
+      await updateStatus(40, "🎬 正在透過 Veo 渲染影片 (這可能需要數分鐘)...");
+      
       let operation = await ai.models.generateVideos({
         model: 'veo-3.1-fast-generate-preview',
         prompt: metadata.visual_prompt,
@@ -85,24 +96,22 @@ export default async function handler(req: any, res: any) {
       });
 
       let attempts = 0;
-      while (!operation.done && attempts < 25) { // 增加安全檢查次數
+      while (!operation.done && attempts < 30) {
         await new Promise(r => setTimeout(r, 10000));
         operation = await ai.operations.getVideosOperation({ operation });
         attempts++;
-        await updateStatus(40 + attempts, `🎬 影片生成中 (${attempts * 4}%)...`);
+        await updateStatus(Math.min(90, 40 + (attempts * 2)), `🎬 影片生成中... (${attempts * 10}秒)`);
       }
 
-      if (!operation.done) throw new Error("影片生成逾時，請檢查 Google Cloud 配額。");
+      if (!operation.done) throw new Error("Veo 影片生成逾時，請檢查 Google Cloud 配額。");
 
       const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
       const videoRes = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
       const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
-      // 3. Upload (安全性檢查：如果無 auth 則跳過上傳)
-      if (!channel.auth || !channel.auth.access_token) {
-        await updateStatus(95, "⚠️ 缺少授權憑證，跳過上傳步驟 (模擬成功)...", 'success');
-      } else {
-        await updateStatus(90, "🚀 正在將影片上傳至 YouTube...");
+      // 3. 上傳邏輯
+      if (channel.auth?.access_token) {
+        await updateStatus(95, "🚀 正在發送到 YouTube...");
         const boundary = '-------314159265358979323846';
         const metadataPart = JSON.stringify({
           snippet: { title: metadata.title, description: metadata.description + "\n#shorts #ai #onyx" },
@@ -123,40 +132,29 @@ export default async function handler(req: any, res: any) {
           },
           body: multipartBody
         });
-
-        if (!uploadRes.ok) {
-           const errText = await uploadRes.text();
-           throw new Error(`YouTube 上傳失敗: ${errText}`);
-        }
+        if (!uploadRes.ok) throw new Error("YouTube API 回報上傳錯誤。");
       }
 
-      // 4. Finalize
-      await updateStatus(100, "✅ 流程完全完成", 'success');
+      await updateStatus(100, "✅ 任務大功告成！", 'success');
       
-      // 更新發文歷史與恢復狀態
-      const finalDbRes = await fetch(DB_URL);
-      const allData = await finalDbRes.json();
-      const channels = Array.isArray(allData) ? allData : (allData ? Object.values(allData) : []);
-      const finalUpdated = channels.map((c: any) => {
+      // 寫入歷史紀錄
+      const lastFetch = await fetch(DB_URL);
+      const historyChannels = await lastFetch.json();
+      const updatedHistory = (Array.isArray(historyChannels) ? historyChannels : Object.values(historyChannels)).map((c: any) => {
         if (c.id === channel.id) {
-          const history = c.history || [];
-          history.unshift({
-            title: metadata.title,
-            publishedAt: new Date().toISOString()
-          });
-          return { ...c, lastRunTime: Date.now(), history: history.slice(0, 10), step: 0, status: 'idle', lastLog: '待命中' };
+          const hist = c.history || [];
+          hist.unshift({ title: metadata.title, publishedAt: new Date().toISOString() });
+          return { ...c, history: hist.slice(0, 10), status: 'idle', step: 0, lastLog: '任務完成，待命' };
         }
         return c;
       });
+      await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(updatedHistory) });
 
-      await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(finalUpdated) });
       return res.status(200).json({ success: true });
     }
-
-    return res.status(400).json({ error: 'Invalid Stage' });
   } catch (e: any) {
-    console.error("[Onyx Pipeline Error]", e.message);
-    await updateStatus(0, `❌ 錯誤: ${e.message}`, 'error');
+    console.error("[ONYX CRITICAL ERROR]", e);
+    await updateStatus(0, `❌ 流程中斷: ${e.message}`, 'error');
     return res.status(200).json({ success: false, error: e.message });
   }
 }
