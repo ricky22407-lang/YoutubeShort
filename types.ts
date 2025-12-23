@@ -6,7 +6,8 @@ export interface ScheduleConfig {
   autoEnabled: boolean;
 }
 
-export interface PublicationRecord {
+// History record for uploaded videos used in ChannelConfig
+export interface ChannelHistory {
   title: string;
   videoId: string;
   url: string;
@@ -24,9 +25,10 @@ export interface ChannelConfig {
   searchKeywords?: string[];
   regionCode?: string;
   language?: 'zh-TW' | 'en';
-  schedule?: ScheduleConfig;
-  lastRunTime?: number;
-  history?: PublicationRecord[]; // 儲存發布歷史紀錄
+  schedule?: ScheduleConfig; // 新增排程設定
+  lastRunTime?: number; // 紀錄上次執行時間避免重複
+  // Added history property to resolve type errors in App.tsx
+  history?: ChannelHistory[];
 }
 
 export interface PipelineMetadata {
@@ -51,6 +53,7 @@ export interface ChannelState {
   target_audience: string;
 }
 
+// Added TrendSignals interface to fix "Module '../types' has no exported member 'TrendSignals'"
 export interface TrendSignals {
   action_verb_frequency: Record<string, number>;
   subject_type_frequency: Record<string, number>;
@@ -59,6 +62,7 @@ export interface TrendSignals {
   algorithm_signal_frequency: Record<string, number>;
 }
 
+// Added CandidateTheme interface to fix "Module '../types' has no exported member 'CandidateTheme'"
 export interface CandidateTheme {
   id: string;
   subject_type: string;
@@ -93,6 +97,7 @@ export interface VideoAsset {
   base64?: string;
 }
 
+// Added UploaderInput interface to fix "Module '../types' has no exported member 'UploaderInput'"
 export interface UploaderInput {
   video_asset: VideoAsset;
   metadata: PromptOutput;
