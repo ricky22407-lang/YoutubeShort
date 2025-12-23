@@ -4,7 +4,7 @@ import {
   ChannelConfig, UploadResult 
 } from '../types';
 import { GoogleGenAI, Type } from "@google/genai";
-import { Buffer } from 'buffer'; // Fix: Import Buffer to resolve 'Cannot find name Buffer' in browser/bundled environments
+import { Buffer } from 'buffer';
 
 const TEXT_MODEL = "gemini-3-flash-preview";
 const VIDEO_MODEL = "veo-3.1-fast-generate-preview";
@@ -99,16 +99,22 @@ export const PipelineCore = {
       config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
     });
 
-    while (!operation.done) {
-      await new Promise(r => setTimeout(r, 10000));
+    // 1. 首段盲等 120s
+    await new Promise(r => setTimeout(r, 120000));
+
+    let attempts = 0;
+    while (!operation.done && attempts < 20) {
+      // 2. 30s 查詢間隔
+      await new Promise(r => setTimeout(r, 30000));
       operation = await ai.operations.getVideosOperation({ operation });
+      attempts++;
     }
+
+    if (!operation.done) throw new Error("影片渲染逾時");
 
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
     const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
     const buffer = await response.arrayBuffer();
-    
-    // 使用 Node.js 全域 Buffer，避免模組引用失敗
     const base64 = Buffer.from(buffer).toString('base64');
 
     return {
@@ -121,7 +127,6 @@ export const PipelineCore = {
   },
 
   async uploadVideo(input: any): Promise<UploadResult> {
-    // 此處目前維持模擬上傳，以確保穩定性
     await new Promise(r => setTimeout(r, 2000));
     return {
       platform: 'youtube',

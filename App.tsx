@@ -1,11 +1,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ChannelConfig } from './types';
-// 注意：假設您已經在環境中安裝了 firebase
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
 import { getDatabase, ref, onValue, set, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js';
 
-// Firebase 配置 (請替換為您的實際配置)
 const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
   authDomain: "your-project.firebaseapp.com",
@@ -24,6 +22,9 @@ const App: React.FC = () => {
   const [wakeLockStatus, setWakeLockStatus] = useState<'locked' | 'unlocked' | 'unsupported'>('unlocked');
   const [cloudStatus, setCloudStatus] = useState<'connected' | 'disconnected'>('disconnected');
   
+  // 新增：追蹤目前是否有任何頻道正在渲染 (Veo 限制)
+  const [isAnyChannelRendering, setIsAnyChannelRendering] = useState(false);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const wakeLockRef = useRef<any>(null);
   const dbRef = useRef<any>(null);
@@ -36,18 +37,16 @@ const App: React.FC = () => {
     autoDeploy: false, nextRun: ''
   });
 
-  // 1. 初始化 Firebase
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
       dbRef.current = getDatabase(app);
       setCloudStatus('connected');
       
-      // 監聽雲端觸發器：當 trigger_check 數值變動時，喚醒本地檢查
       const triggerRef = ref(dbRef.current, 'system/trigger_check');
       onValue(triggerRef, (snapshot) => {
         if (isEngineActive) {
-          addLog("📡 收到雲端喚醒信號，執行排程掃描...");
+          addLog("📡 雲端信號喚醒，掃描排程...");
           checkSchedules();
         }
       });
@@ -56,7 +55,6 @@ const App: React.FC = () => {
     }
   }, [isEngineActive]);
 
-  // 2. 本地資料持久化
   useEffect(() => {
     const saved = localStorage.getItem('pilot_onyx_v8_data');
     if (saved) setChannels(JSON.parse(saved));
@@ -66,13 +64,11 @@ const App: React.FC = () => {
     localStorage.setItem('pilot_onyx_v8_data', JSON.stringify(channels));
   }, [channels]);
 
-  // --- 引擎控制中心 ---
   const requestWakeLock = async () => {
     if ('wakeLock' in navigator) {
       try {
         wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
         setWakeLockStatus('locked');
-        addLog("🛡️ Wake Lock 已啟動");
       } catch (err) { setWakeLockStatus('unsupported'); }
     }
   };
@@ -83,7 +79,7 @@ const App: React.FC = () => {
     if (newStatus) {
       if (audioRef.current) audioRef.current.play().catch(() => {});
       await requestWakeLock();
-      addLog("🚀 引擎點火：雲端+本地雙重監控中");
+      addLog("🚀 引擎點火");
     } else {
       if (audioRef.current) audioRef.current.pause();
       if (wakeLockRef.current) wakeLockRef.current.release();
@@ -91,25 +87,29 @@ const App: React.FC = () => {
     }
   };
 
-  // 核心檢查函數：可由 setInterval 呼叫，也可由 Firebase 遠端喚醒
   const checkSchedules = () => {
     const now = new Date();
+    // 只有在當前沒有其他渲染任務時才發起新任務，避免衝撞 429
+    if (isAnyChannelRendering) {
+      addLog("⏳ 目前已有頻道正在渲染，排程任務延後等待中...");
+      return;
+    }
+
     channels.forEach(async (channel) => {
       if (channel.autoDeploy && channel.nextRun && channel.status !== 'running') {
         const scheduleTime = new Date(channel.nextRun);
         if (now >= scheduleTime && (now.getTime() - scheduleTime.getTime()) < 600000) {
-          addLog(`⏰ 觸發任務: ${channel.name}`);
+          addLog(`⏰ 觸發: ${channel.name}`);
           await runPipeline(channel);
         }
       }
     });
 
-    // 更新雲端心跳，讓你知道分頁還活著
     if (dbRef.current) {
       set(ref(dbRef.current, 'system/last_pulse'), {
         timestamp: serverTimestamp(),
         active_channels: channels.length,
-        status: 'pulsing'
+        status: isAnyChannelRendering ? 'rendering' : 'pulsing'
       });
     }
   };
@@ -119,15 +119,17 @@ const App: React.FC = () => {
       if (isEngineActive) checkSchedules();
     }, 60000); 
     return () => clearInterval(interval);
-  }, [channels, isEngineActive]);
+  }, [channels, isEngineActive, isAnyChannelRendering]);
 
   const runPipeline = async (channel: ChannelConfig) => {
-    if (channel.status === 'running') return;
+    if (channel.status === 'running' || isAnyChannelRendering) return;
+    
+    setIsAnyChannelRendering(true);
     const update = (up: Partial<ChannelConfig>) => {
       setChannels(p => p.map(c => c.id === channel.id ? { ...c, ...up } : c));
     };
 
-    update({ status: 'running', step: 10, lastLog: '正在分析趨勢...' });
+    update({ status: 'running', step: 10, lastLog: '分析趨勢中...' });
 
     try {
       const r1 = await fetch('/api/pipeline', {
@@ -137,14 +139,24 @@ const App: React.FC = () => {
       const d1 = await r1.json();
       if (!d1.success) throw new Error(d1.error);
 
-      update({ step: 40, lastLog: 'Veo 渲染中...' });
+      update({ step: 40, lastLog: 'Veo 渲染中 (約需 3-5 分鐘)...' });
 
       const r2 = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: 'render_and_upload', channel, metadata: d1.metadata })
       });
       const d2 = await r2.json();
-      if (!d2.success) throw new Error(d2.error);
+      
+      if (!d2.success) {
+        if (d2.isQuotaError) {
+          addLog("⚠️ API 額度警告：Veo RPM 已滿，一分鐘後自動重試...");
+          update({ lastLog: 'API 額度滿載，排隊重試中...', step: 30 });
+          await new Promise(r => setTimeout(r, 65000));
+          setIsAnyChannelRendering(false);
+          return runPipeline(channel); // 重試
+        }
+        throw new Error(d2.error);
+      }
 
       let nextRun = channel.nextRun;
       if (channel.autoDeploy && nextRun) {
@@ -155,14 +167,16 @@ const App: React.FC = () => {
 
       update({ 
         status: 'success', step: 100, 
-        lastLog: `發布成功: ${d2.videoId}`,
+        lastLog: `完成: ${d2.videoId}`,
         lastRun: new Date().toISOString(),
         nextRun
       });
-      addLog(`✅ 「${channel.name}」任務完成`);
+      addLog(`✅ ${channel.name} 發布完成`);
     } catch (e: any) {
       update({ status: 'error', lastLog: `${e.message}`, step: 0 });
       addLog(`❌ 失敗: ${e.message}`);
+    } finally {
+      setIsAnyChannelRendering(false);
     }
   };
 
@@ -198,6 +212,12 @@ const App: React.FC = () => {
                 <span className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse' : 'bg-zinc-800'}`}></span>
                 <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Engine {isEngineActive ? 'Active' : 'Standby'}</span>
               </div>
+              {isAnyChannelRendering && (
+                <div className="flex items-center gap-1.5 bg-yellow-500/10 px-2 py-0.5 rounded">
+                  <span className="w-1.5 h-1.5 bg-yellow-500 rounded-full animate-ping"></span>
+                  <span className="text-[8px] font-black uppercase text-yellow-500 tracking-widest">Veo API Occupied</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -215,7 +235,7 @@ const App: React.FC = () => {
         <main className="flex-1 p-10 overflow-y-auto bg-zinc-950/30">
           <div className="max-w-4xl mx-auto space-y-6">
             {channels.map(c => (
-              <div key={c.id} className={`bg-zinc-950 border rounded-[2.5rem] p-8 transition-all hover:border-zinc-700 ${c.status === 'running' ? 'border-cyan-500 ring-1 ring-cyan-500/20' : 'border-zinc-900'}`}>
+              <div key={c.id} className={`bg-zinc-950 border rounded-[2.5rem] p-8 transition-all ${c.status === 'running' ? 'border-cyan-500 ring-1 ring-cyan-500/20 shadow-[0_0_30px_rgba(6,182,212,0.1)]' : 'border-zinc-900'}`}>
                 <div className="flex justify-between items-center">
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
@@ -230,14 +250,22 @@ const App: React.FC = () => {
                   </div>
                   <div className="flex gap-3">
                     <button onClick={() => { setEditingId(c.id); setIsModalOpen(true); }} className="w-12 h-12 flex items-center justify-center rounded-xl bg-zinc-900 text-zinc-600 hover:text-white transition-colors">✎</button>
-                    <button disabled={c.status === 'running'} onClick={() => runPipeline(c)} className={`px-10 py-4 rounded-2xl font-black text-[10px] uppercase transition-all ${c.status === 'running' ? 'bg-zinc-800 text-zinc-600' : 'bg-white text-black hover:scale-105 active:scale-95'}`}>
-                      {c.status === 'running' ? 'Deploying' : 'Deploy'}
+                    {/* Fix: Simplified disabled logic to resolve TypeScript narrowing redundancy error */}
+                    <button 
+                      disabled={c.status === 'running' || isAnyChannelRendering} 
+                      onClick={() => runPipeline(c)} 
+                      className={`px-10 py-4 rounded-2xl font-black text-[10px] uppercase transition-all ${c.status === 'running' ? 'bg-zinc-800 text-zinc-600' : isAnyChannelRendering ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed' : 'bg-white text-black hover:scale-105'}`}
+                    >
+                      {c.status === 'running' ? 'Rendering...' : isAnyChannelRendering ? 'Queueing' : 'Deploy'}
                     </button>
                   </div>
                 </div>
                 {c.status === 'running' && (
-                  <div className="mt-6 h-1 bg-zinc-900 rounded-full overflow-hidden">
-                    <div className="h-full bg-cyan-500 transition-all duration-1000" style={{ width: `${c.step}%` }}></div>
+                  <div className="mt-6 space-y-2">
+                    <div className="h-1 bg-zinc-900 rounded-full overflow-hidden">
+                      <div className="h-full bg-cyan-500 transition-all duration-1000" style={{ width: `${c.step}%` }}></div>
+                    </div>
+                    <p className="text-[8px] text-zinc-700 uppercase font-black tracking-widest text-right animate-pulse">Veo 3.1 Neural Rendering active...</p>
                   </div>
                 )}
               </div>
@@ -248,16 +276,16 @@ const App: React.FC = () => {
         <aside className="w-full lg:w-[400px] border-l border-zinc-900 bg-black flex flex-col p-10">
           <div className="space-y-6">
             <div className="p-6 bg-zinc-900/50 rounded-3xl border border-zinc-800">
-              <h4 className="text-[9px] font-black text-cyan-500 uppercase tracking-widest mb-2">Cloud Synced</h4>
+              <h4 className="text-[9px] font-black text-yellow-500 uppercase tracking-widest mb-2">Quota Guard Active</h4>
               <p className="text-[11px] text-zinc-500 leading-relaxed">
-                本分頁已與 Firebase Realtime Database 連結。你可以從其他裝置更改資料庫中的 <code className="text-zinc-300">trigger_check</code> 來強制喚醒此分頁檢查排程。
+                Veo 3.1 預覽版目前限制 3 RPM。系統已啟動「全域渲染鎖定」，確保多個頻道不會同時發起 API 請求，並將輪詢間隔延長至 30 秒。
               </p>
             </div>
             <div className="space-y-4">
-              <h3 className="text-[9px] font-black text-zinc-700 uppercase tracking-[0.3em] text-center">Live Logs</h3>
+              <h3 className="text-[9px] font-black text-zinc-700 uppercase tracking-[0.3em] text-center">Engine Logs</h3>
               <div className="space-y-3 font-mono text-[9px]">
                 {globalLog.map((log, i) => (
-                  <div key={i} className={`p-4 rounded-xl border border-zinc-900 bg-zinc-950/50 ${log.includes('✅') ? 'text-cyan-400' : log.includes('❌') ? 'text-red-400' : 'text-zinc-600'}`}>
+                  <div key={i} className={`p-4 rounded-xl border border-zinc-900 bg-zinc-950/50 ${log.includes('✅') ? 'text-cyan-400 border-cyan-900/20' : log.includes('❌') ? 'text-red-400' : log.includes('⚠️') ? 'text-yellow-500 border-yellow-900/20' : 'text-zinc-600'}`}>
                     {log}
                   </div>
                 ))}
@@ -270,14 +298,13 @@ const App: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/95 backdrop-blur-xl flex items-center justify-center p-8 z-[100]">
           <div className="bg-zinc-950 border border-zinc-900 w-full max-w-lg rounded-[3rem] p-12 space-y-8">
-            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Core Configuration</h2>
+            <h2 className="text-3xl font-black italic uppercase tracking-tighter">Core Config</h2>
             <div className="space-y-4">
-              <input className="w-full bg-zinc-900 border-none rounded-2xl p-5 text-sm font-bold placeholder:text-zinc-700 focus:ring-2 focus:ring-cyan-500 outline-none" value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})} placeholder="Channel Identifier" />
-              <input className="w-full bg-zinc-900 border-none rounded-2xl p-5 text-sm font-bold placeholder:text-zinc-700 focus:ring-2 focus:ring-cyan-500 outline-none" value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})} placeholder="Niche (e.g. Finance)" />
-              
+              <input className="w-full bg-zinc-900 border-none rounded-2xl p-5 text-sm font-bold text-white outline-none" value={newChan.name} onChange={e => setNewChan({...newChan, name: e.target.value})} placeholder="Channel Name" />
+              <input className="w-full bg-zinc-900 border-none rounded-2xl p-5 text-sm font-bold text-white outline-none" value={newChan.niche} onChange={e => setNewChan({...newChan, niche: e.target.value})} placeholder="Niche" />
               <div className="p-6 bg-zinc-900 rounded-[2rem] space-y-6">
                 <div className="flex justify-between items-center">
-                  <span className="text-[10px] font-black uppercase text-zinc-500">Auto-Pilot Mode</span>
+                  <span className="text-[10px] font-black uppercase text-zinc-500">Auto-Pilot</span>
                   <button onClick={() => setNewChan({...newChan, autoDeploy: !newChan.autoDeploy})} className={`w-12 h-6 rounded-full relative transition-all ${newChan.autoDeploy ? 'bg-cyan-500' : 'bg-zinc-800'}`}>
                     <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${newChan.autoDeploy ? 'right-1' : 'left-1'}`}></div>
                   </button>
@@ -289,7 +316,7 @@ const App: React.FC = () => {
             </div>
             <div className="flex gap-4">
               <button onClick={() => setIsModalOpen(false)} className="flex-1 py-5 text-zinc-600 font-black uppercase text-[10px]">Cancel</button>
-              <button onClick={saveChannel} className="flex-1 py-5 bg-white text-black rounded-2xl font-black uppercase text-[10px] shadow-xl hover:invert transition-all">Sync Core</button>
+              <button onClick={saveChannel} className="flex-1 py-5 bg-white text-black rounded-2xl font-black uppercase text-[10px] shadow-xl hover:invert transition-all">Sync</button>
             </div>
           </div>
         </div>

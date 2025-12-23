@@ -13,7 +13,6 @@ export const generateJSON = async <T>(
   systemInstruction: string,
   responseSchema?: any
 ): Promise<T> => {
-  // Fix: Directly use process.env.API_KEY in named parameter to ensure freshness and SDK compliance
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {
@@ -28,7 +27,6 @@ export const generateJSON = async <T>(
       },
     });
 
-    // Fix: Access .text property as a getter, not a method
     const text = response.text;
     if (!text) throw new Error("Gemini 回傳內容為空。");
 
@@ -41,15 +39,11 @@ export const generateJSON = async <T>(
 };
 
 /**
- * Veo 3.1 影片生成服務 (垂直 9:16)
+ * Veo 3.1 影片生成服務 (最佳化配額版)
  */
 export const generateVideo = async (prompt: string): Promise<string> => {
-  // Fix: Directly use process.env.API_KEY in named parameter for Veo models
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  // Fix: Standard timeout for video generation (up to 10 minutes)
-  const MAX_POLLING_ATTEMPTS = 60; 
-
   try {
     let operation = await ai.models.generateVideos({
       model: videoModelId,
@@ -61,22 +55,34 @@ export const generateVideo = async (prompt: string): Promise<string> => {
       }
     });
 
+    // 1. 首段盲等 120 秒
+    await new Promise(resolve => setTimeout(resolve, 120000));
+
     let attempts = 0;
+    const MAX_POLLING_ATTEMPTS = 15; // 15 * 30s = 450s (7.5 min)
+    
     while (!operation.done && attempts < MAX_POLLING_ATTEMPTS) {
-      // Fix: Follow guidelines of using 10 second polling intervals for video generation
-      await new Promise(resolve => setTimeout(resolve, 10000));
-      operation = await ai.operations.getVideosOperation({operation: operation});
+      // 2. 30 秒查詢一次
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      try {
+        operation = await ai.operations.getVideosOperation({operation: operation});
+      } catch (e: any) {
+        if (e.message.includes("429")) {
+          await new Promise(resolve => setTimeout(resolve, 60000));
+          continue;
+        }
+        throw e;
+      }
       attempts++;
     }
 
     if (!operation.done) {
-        throw new Error("Veo 渲染時間過長，已觸發伺服器保護機制。請重試。");
+        throw new Error("Veo 渲染超時，請檢查 Google AI Studio 任務狀態。");
     }
 
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
     if (!downloadLink) throw new Error("Veo 未能產出影片下載連結。");
 
-    // Fix: Append API key from process.env.API_KEY to the download URL
     const response = await fetch(`${downloadLink}&key=${process.env.API_KEY}`);
     if (!response.ok) throw new Error("影片下載失敗。");
 
