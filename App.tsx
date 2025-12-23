@@ -84,7 +84,7 @@ const App: React.FC = () => {
       setChannels([]);
       setIsEngineActive(false);
       setIsAnyChannelRendering(false);
-      window.location.href = window.location.pathname; // 重新載入頁面
+      window.location.href = window.location.pathname; 
     }
   };
 
@@ -94,7 +94,7 @@ const App: React.FC = () => {
       delete abortControllers.current[id];
     }
     updateChannel(id, { status: 'idle', lastLog: '🔴 手動強行終止完成。系統重置為 Standby。', step: 0 });
-    setIsAnyChannelRendering(false); // 強制釋放全域鎖定
+    setIsAnyChannelRendering(false); 
     addLog(`🛑 [${id}] 物理終止成功。`);
   };
 
@@ -112,7 +112,7 @@ const App: React.FC = () => {
     abortControllers.current[channel.id] = controller;
 
     try {
-      updateChannel(channel.id, { status: 'running', step: 10, lastLog: '正在分析市場趨勢與利基...' });
+      updateChannel(channel.id, { status: 'running', step: 10, lastLog: '正在進行市場競爭分析與病毒式策略建模...' });
       const r1 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -122,7 +122,9 @@ const App: React.FC = () => {
       const d1 = await r1.json();
       if (!d1.success) throw new Error(d1.error);
       
-      updateChannel(channel.id, { step: 40, lastLog: '正在渲染 Veo 高畫質影片 (3-5 分鐘)...' });
+      addLog(`🧠 [${channel.name}] 策略建模完成：${d1.metadata.title}`);
+      
+      updateChannel(channel.id, { step: 40, lastLog: '正在渲染具備視覺衝擊力的高畫質影片...' });
       const r2 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -133,7 +135,7 @@ const App: React.FC = () => {
       if (!d2.success) throw new Error(d2.error);
 
       addLog(`🎉 [${channel.name}] 上傳成功！影片 ID: ${d2.videoId}`);
-      updateChannel(channel.id, { status: 'success', step: 100, lastLog: `上傳成功: ${d2.videoId}` });
+      updateChannel(channel.id, { status: 'success', step: 100, lastLog: `發布成功: ${d2.videoId}` });
     } catch (e: any) {
       if (e.name !== 'AbortError') {
         addLog(`❌ [${channel.name}] 錯誤: ${e.message}`);
@@ -152,7 +154,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-6">
           <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black font-black italic shadow-[0_0_30px_rgba(255,255,255,0.1)]">S</div>
           <div>
-            <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">ShortsPilot <span className="text-zinc-600">v8.9.9</span></h1>
+            <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">ShortsPilot <span className="text-zinc-600">v8.9.10</span></h1>
             <div className="flex items-center gap-2 mt-2">
               <div className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse shadow-[0_0_10px_cyan]' : 'bg-zinc-800'}`}></div>
               <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">{isEngineActive ? 'Engine Operational' : 'Engine Idle'}</span>
@@ -194,7 +196,7 @@ const App: React.FC = () => {
                   
                   <div className="flex items-center gap-8">
                     <div className="space-y-1">
-                      <label className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Target Niches</label>
+                      <label className="text-[8px] font-black text-zinc-600 uppercase tracking-widest">Viral Niches</label>
                       <p className="text-[11px] font-black text-zinc-300 uppercase truncate max-w-[300px]">{c.niche}</p>
                     </div>
                     {c.autoDeploy && (
@@ -223,7 +225,7 @@ const App: React.FC = () => {
               </div>
               {c.status === 'running' && (
                 <div className="mt-12 space-y-3">
-                   <div className="flex justify-between"><span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Pipeline Task</span><span className="text-[9px] font-black text-cyan-500 tracking-widest">{c.step}%</span></div>
+                   <div className="flex justify-between"><span className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">Strategy & Render</span><span className="text-[9px] font-black text-cyan-500 tracking-widest">{c.step}%</span></div>
                    <div className="h-1 bg-zinc-900 rounded-full overflow-hidden"><div className="h-full bg-cyan-500 shadow-[0_0_20px_cyan]" style={{ width: `${c.step}%` }}></div></div>
                 </div>
               )}
@@ -233,7 +235,7 @@ const App: React.FC = () => {
 
         <aside className="w-full lg:w-[400px] flex flex-col h-[calc(100vh-200px)]">
           <div className="flex-1 bg-zinc-950 border border-zinc-900 rounded-[3.5rem] p-10 overflow-hidden shadow-2xl flex flex-col">
-            <h3 className="text-[10px] font-black text-zinc-700 uppercase tracking-[0.6em] text-center mb-10 italic">Telemetry Log</h3>
+            <h3 className="text-[10px] font-black text-zinc-700 uppercase tracking-[0.6em] text-center mb-10 italic">Strategy Log</h3>
             <div className="flex-1 space-y-3 overflow-y-auto pr-3 custom-scrollbar font-mono text-[10px]">
               {globalLog.map((log, i) => (
                 <div key={i} className={`p-4 rounded-[1.5rem] border bg-black/40 transition-all hover:bg-black/60 ${log.includes('✅') || log.includes('🎉') ? 'text-cyan-400 border-cyan-900/20' : log.includes('❌') ? 'text-red-400 border-red-900/20' : 'text-zinc-500 border-zinc-900'}`}>{log}</div>
