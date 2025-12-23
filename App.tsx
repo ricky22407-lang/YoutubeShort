@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ChannelConfig, ScheduleConfig } from './types';
 
 const App: React.FC = () => {
@@ -77,7 +77,6 @@ const App: React.FC = () => {
     window.location.href = url;
   };
 
-  // Fix: Implement openEdit to handle channel editing state
   const openEdit = (channel: ChannelConfig) => {
     setEditingId(channel.id);
     setNewChan({
@@ -89,15 +88,14 @@ const App: React.FC = () => {
     setIsModalOpen(true);
   };
 
-  // Fix: Implement saveChannel to handle both adding and updating channels
   const saveChannel = async () => {
     if (!newChan.name) return alert("請輸入頻道名稱");
-    
     let next: ChannelConfig[];
     if (editingId) {
       next = channels.map(c => c.id === editingId ? { ...c, ...newChan } : c);
       addLog(`✅ 頻道更新成功: ${newChan.name}`);
     } else {
+      // Fix: Add missing 'auth' property to satisfy ChannelConfig interface
       const channel: ChannelConfig = {
         id: Math.random().toString(36).substring(2, 9),
         status: 'idle',
@@ -105,33 +103,27 @@ const App: React.FC = () => {
         niche: newChan.niche,
         language: newChan.language,
         schedule: newChan.schedule,
-        history: []
+        history: [],
+        auth: null
       };
       next = [...channels, channel];
       addLog(`✅ 頻道新增成功: ${newChan.name}`);
     }
-    
     await saveToDB(next);
     setIsModalOpen(false);
     setEditingId(null);
-    setNewChan({ 
-      name: '', niche: 'AI 科技', language: 'zh-TW',
-      schedule: { activeDays: [1, 2, 3, 4, 5], time: '19:00', countPerDay: 1, autoEnabled: true }
-    });
   };
 
   const generateGASScript = () => {
     const firebaseUrl = `https://${process.env.VITE_FIREBASE_PROJECT_ID}.firebaseio.com/channels.json`;
-    const apiKey = process.env.API_KEY;
     const siteUrl = window.location.origin;
 
     return `/**
- * ShortsPilot Pro 終極自動化腳本 (GAS 版)
- * 功能：每小時檢查排程，自動生成並發布影片
+ * ShortsPilot Pro 終極雲端自動化 (Google Apps Script 版)
+ * 無需開機，無需 Vercel Cron，100% 免費運作
  */
 const CONFIG = {
   FIREBASE_URL: "${firebaseUrl}",
-  API_KEY: "${apiKey}",
   PIPELINE_URL: "${siteUrl}/api/pipeline"
 };
 
@@ -152,18 +144,18 @@ function hourlyCheck() {
     const targetHour = parseInt(chan.schedule.time.split(':')[0]);
     const isTime = currentHour === targetHour;
     
-    // 兩小時冷卻
-    const isCooled = !chan.lastRunTime || (Date.now() - chan.lastRunTime > 2 * 60 * 60 * 1000);
+    // 冷卻檢查：防止重複執行
+    const isCooled = !chan.lastRunTime || (Date.now() - chan.lastRunTime > 3600000);
 
     if (isToday && isTime && isCooled) {
-      console.log("觸發發片任務: " + chan.name);
+      console.log("正在觸發雲端發片: " + chan.name);
       const options = {
         method: "post",
         contentType: "application/json",
         payload: JSON.stringify({ stage: "full_flow", channel: chan }),
         muteHttpExceptions: true
       };
-      // GAS 的超時限制是 6 分鐘，非常適合 Vercel 做不到的影片渲染
+      // GAS 執行時間上限為 6 分鐘，適合渲染影片
       UrlFetchApp.fetch(CONFIG.PIPELINE_URL, options);
     }
   });
@@ -175,14 +167,14 @@ function hourlyCheck() {
       <nav className="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-xl sticky top-0 z-50 flex justify-between items-center">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center font-black italic shadow-lg text-white">S</div>
-          <h1 className="text-xl font-black italic uppercase tracking-tighter">ShortsPilot <span className="text-indigo-500 text-xs px-2 py-1 bg-white/10 rounded-lg ml-2 border border-white/5">PRO CLOUD</span></h1>
+          <h1 className="text-xl font-black italic uppercase tracking-tighter">ShortsPilot <span className="text-indigo-500 text-xs px-2 py-1 bg-white/10 rounded-lg ml-2 border border-white/5">PRO GAS</span></h1>
         </div>
         <div className="flex gap-4">
            <button onClick={() => setShowGAS(true)} className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-indigo-400 rounded-xl font-bold transition-all border border-slate-700 flex items-center gap-2">
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z"/></svg>
-              設定關機自動化
+              一鍵自動化
            </button>
-           <button onClick={() => { setIsModalOpen(true); setEditingId(null); setNewChan({ name: '', niche: 'AI 科技', language: 'zh-TW', schedule: { activeDays: [1, 2, 3, 4, 5], time: '19:00', countPerDay: 1, autoEnabled: true } }); }} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-xl shadow-indigo-900/40">新增頻道</button>
+           <button onClick={() => { setIsModalOpen(true); setEditingId(null); }} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-xl shadow-indigo-900/40">新增頻道</button>
         </div>
       </nav>
 
@@ -190,8 +182,8 @@ function hourlyCheck() {
         <main className="flex-1 p-8 overflow-y-auto">
           <div className="max-w-4xl mx-auto space-y-6">
             {channels.length === 0 && !isLoading && (
-              <div className="text-center py-20 bg-slate-900/20 border-2 border-dashed border-slate-800 rounded-[3rem]">
-                <p className="text-slate-500 font-bold">目前沒有頻道，請點擊「新增頻道」開始你的 AI 創作之旅</p>
+              <div className="text-center py-20 bg-slate-900/20 border-2 border-dashed border-slate-800 rounded-[3rem] animate-pulse">
+                <p className="text-slate-500 font-bold">尚未新增任何頻道，點擊右上角「新增頻道」開始運作</p>
               </div>
             )}
             {channels.map(c => (
@@ -202,38 +194,33 @@ function hourlyCheck() {
                       <h2 className="text-2xl font-black text-white leading-tight">{c.name}</h2>
                       <span className="bg-slate-800 text-slate-400 text-[9px] px-2.5 py-0.5 rounded-full font-black uppercase tracking-widest border border-slate-700">{c.niche}</span>
                     </div>
-                    
                     <div className="flex flex-wrap gap-1.5 mb-4">
                       {['日','一','二','三','四','五','六'].map((d, i) => (
                         <span key={i} className={`text-[10px] w-6.5 h-6.5 flex items-center justify-center rounded-lg font-bold border ${c.schedule?.activeDays.includes(i) ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800/50 text-slate-600 border-slate-800'}`}>{d}</span>
                       ))}
-                      <span className="ml-3 text-indigo-400 font-mono font-bold flex items-center gap-1.5 bg-indigo-500/5 px-3 rounded-lg border border-indigo-500/10">
-                        {c.schedule?.time}
-                      </span>
+                      <span className="ml-3 text-indigo-400 font-mono font-bold flex items-center gap-1.5 bg-indigo-500/5 px-3 rounded-lg border border-indigo-500/10">{c.schedule?.time}</span>
                     </div>
-                    
                     <div className="flex items-center gap-3 bg-slate-950/40 p-3 rounded-2xl border border-slate-800/50">
                       <div className={`w-2.5 h-2.5 rounded-full shadow-lg ${c.status === 'running' ? 'bg-blue-500 animate-pulse ring-4 ring-blue-500/20' : 'bg-slate-600'}`}></div>
-                      <p className="text-sm font-bold truncate max-w-sm text-slate-400">{c.lastLog || '等待任務啟動...'}</p>
+                      <p className="text-sm font-bold truncate max-w-sm text-slate-400">{c.lastLog || '等待雲端腳本觸發...'}</p>
                     </div>
                   </div>
-
                   <div className="flex gap-3">
                     <button onClick={() => openEdit(c)} className="p-3.5 bg-slate-800 text-slate-400 hover:text-white rounded-2xl transition-all border border-slate-700"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg></button>
                     {!c.auth ? (
-                      <button onClick={() => startAuth(c)} className="px-6 py-3 bg-amber-600/10 text-amber-500 border border-amber-600/20 rounded-2xl font-bold">連結 YouTube</button>
+                      <button onClick={() => startAuth(c)} className="px-6 py-3 bg-amber-600/10 text-amber-500 border border-amber-600/20 rounded-2xl font-bold">連結權限</button>
                     ) : (
-                      <button disabled={c.status === 'running'} onClick={() => { addLog(`手動啟動: ${c.name}`); /* 邏輯略 */ }} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-lg shadow-indigo-900/30 transition-all">{c.status === 'running' ? '生成中...' : '立即發片'}</button>
+                      <button className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-lg shadow-indigo-900/30 transition-all">手動補發</button>
                     )}
                   </div>
                 </div>
 
                 {c.history && c.history.length > 0 && (
                   <div className="mt-4 pt-6 border-t border-slate-800/60">
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">最近發布紀錄 (History)</h3>
+                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4">雲端發布紀錄</h3>
                     <div className="grid gap-2">
                       {c.history.map((record, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3.5 bg-slate-950/40 rounded-2xl border border-slate-800/30 hover:border-indigo-500/30 transition-all">
+                        <div key={idx} className="flex items-center justify-between p-3.5 bg-slate-950/40 rounded-2xl border border-slate-800/30">
                           <div className="flex flex-col">
                             <span className="text-white text-xs font-bold truncate max-w-xs">{record.title}</span>
                             <span className="text-[9px] text-slate-500 font-mono">{new Date(record.publishedAt).toLocaleString()}</span>
@@ -252,14 +239,18 @@ function hourlyCheck() {
         </main>
 
         <aside className="w-full lg:w-96 border-l border-slate-800 bg-slate-950/30 backdrop-blur-md p-6 flex flex-col">
-          <div className="p-5 bg-indigo-600/10 border border-indigo-600/20 rounded-3xl mb-8">
-            <h4 className="text-xs font-black text-indigo-400 uppercase mb-2">🚀 專業級關機自動化</h4>
+          <div className="p-6 bg-emerald-600/10 border border-emerald-600/20 rounded-3xl mb-8">
+            <h4 className="text-xs font-black text-emerald-400 uppercase mb-2 flex items-center gap-2">
+               <div className="w-2 h-2 bg-emerald-400 rounded-full"></div>
+               雲端大腦：Google Apps Script
+            </h4>
             <p className="text-[11px] text-slate-400 leading-relaxed">
-               建議搭配 <b>Google Apps Script</b>。
-               這能讓你在不開電腦、不付費給 Vercel 的情況下，實現 24/7 自動發片，且支援長達 6 分鐘的運算時間。
+               我們已移除所有受限的本地排程。現在請點擊右上角按鈕，將腳本貼至您的 Google 帳戶。
+               <br/><br/>
+               這將確保即便電腦關機、分頁關閉，AI 依然能準時在雲端為您產片。
             </p>
           </div>
-          <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 px-2">事件日誌</h3>
+          <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 px-2">實時日誌</h3>
           <div className="space-y-2.5 font-mono text-[10px] flex-1 overflow-y-auto pr-2">
             {globalLog.map((log, i) => (
               <div key={i} className={`p-3 rounded-2xl border transition-all ${log.includes('✅') ? 'bg-emerald-950/20 text-emerald-400 border-emerald-900/30' : 'bg-slate-900/60 text-slate-500 border-slate-800/50'}`}> {log} </div>
@@ -272,13 +263,17 @@ function hourlyCheck() {
         <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-xl flex items-center justify-center p-6 z-[100] animate-fade-in">
           <div className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-[3.5rem] p-12 shadow-2xl relative overflow-hidden">
             <h2 className="text-2xl font-black text-white italic uppercase mb-4">設定 Google Apps Script 自動化</h2>
-            <p className="text-slate-400 text-sm mb-8 leading-relaxed">
-              請至 <a href="https://script.google.com/" target="_blank" className="text-indigo-400 underline">Google Apps Script</a> 建立新專案，貼入下方腳本並儲存，最後設定「計時觸發器」每小時執行一次即可。
-            </p>
-            <textarea readOnly className="w-full h-64 bg-slate-950 border border-slate-800 rounded-2xl p-6 text-[10px] font-mono text-emerald-400 outline-none mb-6" value={generateGASScript()} />
+            <div className="bg-slate-950 border border-slate-800 rounded-2xl p-6 mb-6">
+              <ol className="text-xs text-slate-400 space-y-3 list-decimal pl-4">
+                <li>至 <a href="https://script.google.com/" target="_blank" className="text-indigo-400 underline font-bold">Google Apps Script</a> 點擊「新專案」。</li>
+                <li>複製下方代碼，貼上並儲存。</li>
+                <li>點擊左側「時鐘圖示 (觸發器)」，新增「每小時執行一次」的觸發器。</li>
+              </ol>
+            </div>
+            <textarea readOnly className="w-full h-48 bg-slate-950 border border-slate-800 rounded-2xl p-6 text-[10px] font-mono text-emerald-400 outline-none mb-6" value={generateGASScript()} />
             <div className="flex gap-4">
-              <button onClick={() => { navigator.clipboard.writeText(generateGASScript()); addLog("腳本已複製！"); }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black">複製腳本代碼</button>
-              <button onClick={() => setShowGAS(false)} className="flex-1 py-4 bg-slate-800 text-slate-400 rounded-2xl font-black">關閉</button>
+              <button onClick={() => { navigator.clipboard.writeText(generateGASScript()); addLog("代碼已複製到剪貼簿"); }} className="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black">複製代碼</button>
+              <button onClick={() => setShowGAS(false)} className="flex-1 py-4 bg-slate-800 text-slate-400 rounded-2xl font-black">關閉視窗</button>
             </div>
           </div>
         </div>
