@@ -16,7 +16,6 @@ const firebaseConfig = {
 
 const DAYS_NAME = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// 新增：可中斷的延時函式
 const sleep = (ms: number, signal?: AbortSignal) => {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -33,15 +32,15 @@ const App: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isEngineActive, setIsEngineActive] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<'connected' | 'disconnected'>('disconnected');
+  
+  // 核心控制變數，使用 Ref 確保讀取到最新值，不受 React 渲染週期限制
+  const isRenderingRef = useRef(false);
   const [isAnyChannelRendering, setIsAnyChannelRendering] = useState(false);
   
   const abortControllers = useRef<Record<string, AbortController>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const dbRef = useRef<any>(null);
   
-  const isCheckingRef = useRef(false);
-  const activeLaunchRef = useRef<Set<string>>(new Set());
-
   const [globalLog, setGlobalLog] = useState<string[]>([]);
   const addLog = (msg: string) => setGlobalLog(p => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...p].slice(0, 30));
 
@@ -54,34 +53,32 @@ const App: React.FC = () => {
     }
   });
 
+  // 1. 初始化 Firebase
   useEffect(() => {
     try {
       const app = initializeApp(firebaseConfig);
       dbRef.current = getDatabase(app);
       setCloudStatus('connected');
-      
-      const remoteTriggerRef = ref(dbRef.current, 'system/remote_trigger');
-      onValue(remoteTriggerRef, (snapshot) => {
-        const data = snapshot.val();
-        if (data && isEngineActive) {
-          addLog("📡 接收到遠端指令，執行手動掃描...");
-          checkSchedules();
-        }
-      });
     } catch (e) {
       console.error("Firebase Init Failed", e);
     }
-  }, [isEngineActive]);
+  }, []);
 
+  // 2. 穩定的定時器：只在引擎開關切換時重新啟動
   useEffect(() => {
     let timer: any;
     if (isEngineActive) {
+      addLog("🚀 引擎啟動：進入 30s 掃描循環");
+      // 首次立即檢查
+      checkSchedules();
       timer = setInterval(() => {
         checkSchedules();
       }, 30000);
     }
-    return () => clearInterval(timer);
-  }, [isEngineActive, channels, isAnyChannelRendering]);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [isEngineActive]); // 僅依賴引擎開關
 
   useEffect(() => {
     const saved = localStorage.getItem('pilot_onyx_v8_data');
@@ -92,73 +89,70 @@ const App: React.FC = () => {
     localStorage.setItem('pilot_onyx_v8_data', JSON.stringify(channels));
   }, [channels]);
 
+  // 更新渲染狀態的輔助函式，同步更新 Ref 與 State
+  const setRenderingState = (val: boolean) => {
+    isRenderingRef.current = val;
+    setIsAnyChannelRendering(val);
+  };
+
   const toggleEngine = () => {
     const newStatus = !isEngineActive;
     setIsEngineActive(newStatus);
     if (newStatus) {
       if (audioRef.current) audioRef.current.play().catch(() => {});
-      addLog("🚀 引擎點火：自動排程模式已啟動 (30s 輪詢)");
     } else {
       if (audioRef.current) audioRef.current.pause();
-      addLog("🛑 引擎停機");
+      addLog("🛑 引擎已停機");
     }
   };
 
   const checkSchedules = () => {
-    if (isCheckingRef.current || isAnyChannelRendering) return;
-    isCheckingRef.current = true;
+    // 嚴格鎖定：如果有人在跑，連掃描都不要做，徹底保護 RPM
+    if (isRenderingRef.current) return;
 
     const now = new Date();
     const currentDay = now.getDay();
     const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
-    try {
-      channels.forEach((channel) => {
-        if (!channel.autoDeploy || !channel.weeklySchedule || channel.status === 'running') return;
-        const isToday = channel.weeklySchedule.days.includes(currentDay);
-        const isCorrectTime = channel.weeklySchedule.times.includes(currentTime);
-        const slotId = `${currentDay}_${currentTime}`;
-        if (isToday && isCorrectTime && channel.lastTriggeredSlot !== slotId && !activeLaunchRef.current.has(channel.id)) {
-          addLog(`⏰ 時段匹配: ${channel.name} (${currentTime})`);
-          runPipeline(channel, slotId);
-        }
-      });
+    // 使用傳統 for 迴圈以便隨時 break，實作順序觸發
+    for (const channel of channels) {
+      if (!channel.autoDeploy || !channel.weeklySchedule || channel.status === 'running') continue;
 
-      if (dbRef.current && isEngineActive) {
-        set(ref(dbRef.current, 'system/heartbeat'), {
-          last_check: serverTimestamp(),
-          is_busy: isAnyChannelRendering
-        });
+      const isToday = channel.weeklySchedule.days.includes(currentDay);
+      const isCorrectTime = channel.weeklySchedule.times.includes(currentTime);
+      const slotId = `${currentDay}_${currentTime}`;
+
+      if (isToday && isCorrectTime && channel.lastTriggeredSlot !== slotId) {
+        addLog(`⏰ 偵測到匹配時段: ${channel.name}，準備發動任務...`);
+        runPipeline(channel, slotId);
+        // 重要：一輪掃描只啟動一個頻道，其餘的等 30 秒後的下一輪
+        break; 
       }
-    } finally {
-      isCheckingRef.current = false;
+    }
+
+    if (dbRef.current && isEngineActive) {
+      set(ref(dbRef.current, 'system/heartbeat'), {
+        last_check: serverTimestamp(),
+        is_busy: isRenderingRef.current
+      });
     }
   };
 
   const abortPipeline = (id: string) => {
     if (abortControllers.current[id]) {
-      // 1. 發送中斷信號
       abortControllers.current[id].abort();
-      
-      // 2. 立即清理 UI 狀態，不等待非同步鏈完成
-      addLog(`⚡ 已強制終止頻道任務: ${id}`);
+      addLog(`⚡ 任務強制終止: ${id}`);
       setChannels(p => p.map(c => c.id === id ? { ...c, status: 'idle', lastLog: '任務已手動取消', step: 0 } : c));
-      
-      // 3. 釋放全域原子鎖
-      activeLaunchRef.current.delete(id);
-      setIsAnyChannelRendering(false);
-      
-      // 4. 移除控制器參考
+      setRenderingState(false);
       delete abortControllers.current[id];
     }
   };
 
   const runPipeline = async (channel: ChannelConfig, slotId?: string) => {
-    if (channel.status === 'running' || isAnyChannelRendering || activeLaunchRef.current.has(channel.id)) return;
+    // 雙重防禦鎖
+    if (isRenderingRef.current) return;
     
-    activeLaunchRef.current.add(channel.id);
-    setIsAnyChannelRendering(true);
-    
+    setRenderingState(true);
     const controller = new AbortController();
     abortControllers.current[channel.id] = controller;
 
@@ -174,7 +168,7 @@ const App: React.FC = () => {
     });
 
     try {
-      // 階段 1: 分析
+      // 階段 1: 分析 (文字生成 RPM 消耗處)
       const r1 = await fetch('/api/pipeline', {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
@@ -184,12 +178,11 @@ const App: React.FC = () => {
       const d1 = await r1.json();
       if (!d1.success) throw new Error(d1.error);
 
-      // 檢查中斷
-      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (controller.signal.aborted) return;
 
-      update({ step: 40, lastLog: 'Veo 渲染中 (120s 盲等 + 30s 輪詢)...' });
+      update({ step: 40, lastLog: 'Veo 渲染中 (啟動 120s 盲等機制)...' });
 
-      // 階段 2: 渲染與上傳
+      // 階段 2: 渲染與上傳 (API 輪詢負載處)
       const r2 = await fetch('/api/pipeline', {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
@@ -200,15 +193,11 @@ const App: React.FC = () => {
       
       if (!d2.success) {
         if (d2.isQuotaError) {
-          addLog("⚠️ API 額度限制，等待重試...");
-          update({ lastLog: 'API 429 限制，佇列等待中...', step: 30 });
-          
-          // 使用可中斷的 sleep
-          await sleep(65000, controller.signal);
-          
-          activeLaunchRef.current.delete(channel.id);
-          setIsAnyChannelRendering(false);
-          return runPipeline(channel, slotId); 
+          addLog("⚠️ API 429 觸發，系統自動進入 90s 冷卻期...");
+          update({ lastLog: 'API 限制，冷卻重試中...', step: 30 });
+          await sleep(90000, controller.signal);
+          setRenderingState(false);
+          return; // 結束本輪，等下一次 30s 掃描自動重試
         }
         throw new Error(d2.error);
       }
@@ -218,19 +207,16 @@ const App: React.FC = () => {
         lastLog: `發布成功: ${d2.videoId}`,
         lastRun: new Date().toISOString()
       });
-      addLog(`✅ ${channel.name} 任務完成`);
+      addLog(`✅ [${channel.name}] 流程圓滿結束`);
     } catch (e: any) {
-      if (e.name === 'AbortError' || controller.signal.aborted) {
-        // UI 已在 abortPipeline 更新，這裡僅記錄日誌
-        console.log(`[Pipeline] ${channel.name} aborted.`);
+      if (e.name === 'AbortError') {
+        console.log("Abort success.");
       } else {
         update({ status: 'error', lastLog: `${e.message}`, step: 0 });
-        addLog(`❌ 失敗: ${e.message}`);
+        addLog(`❌ 核心故障: ${e.message}`);
       }
     } finally {
-      // 確保資源釋放
-      setIsAnyChannelRendering(false);
-      activeLaunchRef.current.delete(channel.id);
+      setRenderingState(false);
       delete abortControllers.current[channel.id];
     }
   };
@@ -257,7 +243,7 @@ const App: React.FC = () => {
   const saveChannel = () => {
     if (!newChan.name) return;
     const cleanTimes = newChan.weeklySchedule.times.filter(t => t !== '');
-    const configToSave = { ...newChan, weeklySchedule: { ...newChan.weeklySchedule, days: newChan.weeklySchedule.days, times: cleanTimes } };
+    const configToSave = { ...newChan, weeklySchedule: { ...newChan.weeklySchedule, times: cleanTimes } };
 
     if (editingId) {
       setChannels(channels.map(c => c.id === editingId ? { ...c, ...configToSave } : c));
@@ -291,7 +277,7 @@ const App: React.FC = () => {
             <h1 className="text-2xl font-black italic uppercase tracking-tighter leading-none">ShortsPilot <span className="text-zinc-600">ONYX</span></h1>
             <div className="flex items-center gap-3 mt-2">
               <span className={`w-2 h-2 rounded-full ${cloudStatus === 'connected' ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500'}`}></span>
-              <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">Active Sync / {isEngineActive ? 'Engine On' : 'Engine Off'}</span>
+              <span className="text-[8px] font-black uppercase text-zinc-500 tracking-widest">System Status / {isEngineActive ? 'Engine On' : 'Engine Off'}</span>
             </div>
           </div>
         </div>
@@ -342,7 +328,7 @@ const App: React.FC = () => {
                       <button onClick={() => abortPipeline(c.id)} className="px-10 py-5 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-black text-[10px] uppercase shadow-[0_0_20px_rgba(220,38,38,0.3)] transition-all animate-pulse">Force Abort</button>
                     ) : (
                       <button disabled={isAnyChannelRendering} onClick={() => runPipeline(c)} className={`px-12 py-5 rounded-2xl font-black text-[10px] uppercase transition-all ${isAnyChannelRendering ? 'bg-zinc-900 text-zinc-700' : 'bg-white text-black hover:invert'}`}>
-                        {isAnyChannelRendering ? 'Lockdown' : 'Deploy Now'}
+                        {isAnyChannelRendering ? 'System Busy' : 'Deploy Now'}
                       </button>
                     )}
                   </div>
@@ -366,23 +352,23 @@ const App: React.FC = () => {
         <aside className="w-full lg:w-[420px] border-l border-zinc-900 bg-black flex flex-col p-10">
           <div className="space-y-8">
             <div className="p-8 bg-zinc-950 rounded-[2.5rem] border border-zinc-900 space-y-4">
-              <h4 className="text-[10px] font-black text-cyan-500 uppercase tracking-widest">Global Status</h4>
+              <h4 className="text-[10px] font-black text-cyan-500 uppercase tracking-widest">Platform Guard</h4>
               <div className="space-y-3">
                 <div className="flex justify-between text-[11px] font-bold">
-                  <span className="text-zinc-600">Engine Heartbeat</span>
-                  <span className={isEngineActive ? 'text-cyan-500' : 'text-zinc-800'}>{isEngineActive ? 'PULSING' : 'OFF'}</span>
+                  <span className="text-zinc-600">Concurrency Lock</span>
+                  <span className={isAnyChannelRendering ? 'text-yellow-500' : 'text-green-500'}>{isAnyChannelRendering ? 'ACTIVE' : 'IDLE'}</span>
                 </div>
                 <div className="flex justify-between text-[11px] font-bold">
-                  <span className="text-zinc-600">API RPM Guard</span>
-                  <span className={isAnyChannelRendering ? 'text-yellow-500' : 'text-green-500'}>{isAnyChannelRendering ? 'BUSY' : 'READY'}</span>
+                  <span className="text-zinc-600">Scan Frequency</span>
+                  <span>30 SEC</span>
                 </div>
               </div>
             </div>
 
             <div className="space-y-4">
-              <h3 className="text-[10px] font-black text-zinc-800 uppercase tracking-[0.4em] text-center italic">Subsystem Logs</h3>
+              <h3 className="text-[10px] font-black text-zinc-800 uppercase tracking-[0.4em] text-center italic">Neural Logs</h3>
               <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
-                {globalLog.length === 0 && <p className="text-center text-zinc-800 text-[9px] uppercase font-black py-10">Waiting for events...</p>}
+                {globalLog.length === 0 && <p className="text-center text-zinc-800 text-[9px] uppercase font-black py-10">Waiting for signals...</p>}
                 {globalLog.map((log, i) => (
                   <div key={i} className={`p-5 rounded-[1.5rem] border border-zinc-900 bg-zinc-950/50 text-[10px] font-bold leading-relaxed ${log.includes('✅') ? 'text-cyan-400 border-cyan-900/10' : log.includes('❌') ? 'text-red-400 border-red-900/10' : 'text-zinc-500'}`}>
                     {log}
