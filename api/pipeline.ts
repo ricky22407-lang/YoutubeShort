@@ -67,7 +67,6 @@ async function generateWithFallback(ai: any, params: any) {
 }
 
 export default async function handler(req: any, res: any) {
-  // 強制最外層 JSON 包裝，防止 HTML 錯誤回傳
   try {
     if (req.method !== 'POST') {
       return res.status(405).json({ success: false, error: 'Method Not Allowed' });
@@ -79,29 +78,22 @@ export default async function handler(req: any, res: any) {
     }
 
     const { stage, channel, metadata } = req.body;
+    // 每次請求重新建立實例以確保金鑰時效性
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
       case 'analyze': {
-        // 自動執行雙軌搜尋
         const trends = await getTrends(channel.niche, channel.regionCode, API_KEY);
 
         const analysisParams = {
           contents: `
           【角色】：頂尖 YouTube 演算法分析師
           【目標】：將「全域病毒節奏」嫁接到「垂直利基內容」中。
+          【利基】: ${channel.niche}
+          【垂直利基趨勢】: ${JSON.stringify(trends.nicheTrends)}
+          【全域病毒趨勢】: ${JSON.stringify(trends.globalTrends)}
           
-          【數據輸入】：
-          1. 垂直利基 (同業): ${JSON.stringify(trends.nicheTrends)}
-          2. 全域病毒 (演算法最愛): ${JSON.stringify(trends.globalTrends)}
-          
-          【頻道設定】：
-          利基: ${channel.niche}
-          語系: ${channel.language === 'en' ? 'English' : '繁體中文'}
-          
-          【任務】：
-          分析數據後，產出一個具備「病毒式鉤子」的視覺提示詞、標題與描述。
-          請回傳純 JSON。`,
+          任務：產出 JSON 格式的短影音製作提示詞(prompt)、標題(title)與策略說明(strategy_note)。`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -131,7 +123,7 @@ export default async function handler(req: any, res: any) {
       case 'render_and_upload': {
         if (!channel.auth?.access_token) throw new Error("YouTube 授權無效，請重新連結。");
 
-        // 渲染影片
+        // 啟動 Veo 影片渲染
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
           prompt: metadata.prompt,
@@ -139,24 +131,42 @@ export default async function handler(req: any, res: any) {
         });
 
         let attempts = 0;
-        while (!operation.done && attempts < 40) {
-          await new Promise(r => setTimeout(r, 15000));
+        const MAX_ATTEMPTS = 50; // 50 * 10s = 500s (約 8 分鐘)
+        
+        while (!operation.done && attempts < MAX_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, 10000));
           operation = await ai.operations.getVideosOperation({ operation });
+          
+          // 檢查 operation 是否回傳了錯誤
+          if ((operation as any).error) {
+            throw new Error(`Veo 渲染出錯: ${(operation as any).error.message}`);
+          }
           attempts++;
         }
 
         if (!operation.done) throw new Error("影片渲染逾時 (Veo Task Timeout)");
+        
+        // 確保 operation.response 存在
+        if (!operation.response?.generatedVideos || operation.response.generatedVideos.length === 0) {
+          throw new Error("模型已完成但未產出任何影片內容 (Empty response)");
+        }
 
-        const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+        const downloadLink = operation.response.generatedVideos[0]?.video?.uri;
+        if (!downloadLink) {
+          throw new Error("無法從模型響應中解析影片下載連結 (Missing video URI)");
+        }
+
         const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
+        if (!videoRes.ok) throw new Error(`影片文件下載失敗: ${videoRes.statusText}`);
+        
         const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
         
-        // YouTube Multipart Upload
+        // YouTube 上傳邏輯
         const boundary = '-------PIPELINE_ONYX_V8_UPLOAD_BOUNDARY';
         const jsonMetadata = JSON.stringify({
           snippet: { 
             title: metadata.title, 
-            description: metadata.desc + "\n\n#Shorts #AI",
+            description: metadata.desc + "\n\n#Shorts #AI #Automation",
             categoryId: "22" 
           },
           status: { privacyStatus: "public", selfDeclaredMadeForKids: false }
@@ -179,7 +189,7 @@ export default async function handler(req: any, res: any) {
         });
 
         const uploadData = await uploadRes.json();
-        if (uploadData.error) throw new Error(uploadData.error.message);
+        if (uploadData.error) throw new Error(`YouTube 上傳錯誤: ${uploadData.error.message}`);
         
         return res.status(200).json({ success: true, videoId: uploadData.id });
       }
@@ -189,11 +199,9 @@ export default async function handler(req: any, res: any) {
     }
   } catch (e: any) {
     console.error("[Fatal API Error]:", e.message);
-    // 即使發生最嚴重的崩潰，也回傳 JSON
     return res.status(200).json({ 
       success: false, 
-      error: `伺服器處理失敗: ${e.message}`,
-      stack: process.env.NODE_ENV === 'development' ? e.stack : undefined
+      error: `伺服器處理失敗: ${e.message}` 
     });
   }
 }
