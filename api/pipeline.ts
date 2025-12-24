@@ -5,8 +5,12 @@ import { TrendSearcher } from '../modules/TrendSearcher';
 
 export const config = {
   maxDuration: 300,
-  api: { bodyParser: { sizeLimit: '15mb' } } 
 };
+
+// 輔助函式：清理 AI 回傳的 JSON 字串
+function cleanJson(text: string): string {
+  return text.replace(/```json/g, '').replace(/```/g, '').trim();
+}
 
 async function generateWithFallback(ai: any, params: any) {
   const models = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-flash-lite-latest'];
@@ -14,7 +18,6 @@ async function generateWithFallback(ai: any, params: any) {
 
   for (const modelName of models) {
     try {
-      console.log(`[Pipeline] Analysis Level: ${modelName}`);
       const response = await ai.models.generateContent({
         ...params,
         model: modelName
@@ -29,12 +32,12 @@ async function generateWithFallback(ai: any, params: any) {
 }
 
 export default async function handler(req: any, res: any) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+  if (req.method !== 'POST') return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   
-  const { stage, channel, metadata } = req.body;
   const API_KEY = process.env.API_KEY;
   if (!API_KEY) return res.status(200).json({ success: false, error: 'System API_KEY Missing' });
 
+  const { stage, channel, metadata } = req.body;
   const ai = new GoogleGenAI({ apiKey: API_KEY });
 
   try {
@@ -48,19 +51,10 @@ export default async function handler(req: any, res: any) {
           利基領域: ${channel.niche}.
           語系: ${channel.language === 'en' ? 'English' : '繁體中文'}.
           
-          【趨勢數據注入】：
-          1. 垂直利基趨勢 (你的同業): ${JSON.stringify(trends.nicheTrends)}
-          2. 全域病毒趨勢 (目前演算法最愛的節奏): ${JSON.stringify(trends.globalTrends)}
+          垂直利基趨勢: ${JSON.stringify(trends.nicheTrends)}
+          全域病毒趨勢: ${JSON.stringify(trends.globalTrends)}
           
-          【任務】：
-          分析以上數據，找出全域趨勢中的「高留存視覺特徵」（如：特定色彩、鏡頭運動、光影節奏），並將其應用在你的「利基領域」中。
-          
-          【視覺提示詞規範】：
-          1. 必須符合 Hook (0-2s) / Body / Loop 結構。
-          2. 使用高級攝影術語提升 Veo 產出品質（如：Global Illumination, Ray-traced reflections, Dynamic Tracking Shot）。
-          3. 確保開頭具備極強的視覺衝突。
-          
-          請回傳 JSON。`,
+          任務：請分析趨勢並結合視覺策略。請回傳 JSON 格式。`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -77,9 +71,11 @@ export default async function handler(req: any, res: any) {
         };
 
         const result = await generateWithFallback(ai, analysisParams);
+        const cleanedText = cleanJson(result.text || '{}');
+        
         return res.status(200).json({ 
           success: true, 
-          metadata: JSON.parse(result.text || '{}'),
+          metadata: JSON.parse(cleanedText),
           modelUsed: result.modelUsed 
         });
       }
@@ -127,13 +123,15 @@ export default async function handler(req: any, res: any) {
         });
 
         const uploadData = await uploadRes.json();
+        if (uploadData.error) throw new Error(uploadData.error.message);
         return res.status(200).json({ success: true, videoId: uploadData.id });
       }
 
       default:
-        return res.status(400).json({ error: 'Invalid Stage' });
+        return res.status(400).json({ success: false, error: 'Invalid Stage' });
     }
   } catch (e: any) {
+    console.error("[API Handler Error]:", e.message);
     return res.status(200).json({ success: false, error: e.message });
   }
 }

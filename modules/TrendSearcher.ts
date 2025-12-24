@@ -2,79 +2,62 @@
 import { ShortsData, IModule, ChannelConfig } from '../types';
 
 export class TrendSearcher implements IModule<ChannelConfig, { nicheTrends: ShortsData[], globalTrends: ShortsData[] }> {
-  name = "Trend Searcher v2";
-  description = "雙軌搜尋引擎：垂直領域深度 + 全域流量廣度。";
+  name = "Trend Searcher v2.1 (Lightweight)";
+  description = "輕量化雙軌搜尋引擎：使用原生 Fetch 確保 Serverless 穩定性。";
 
   async execute(config: ChannelConfig): Promise<{ nicheTrends: ShortsData[], globalTrends: ShortsData[] }> {
-    // 如果在瀏覽器端運行，返回模擬數據
+    // 瀏覽器端直接回傳模擬數據
     if (typeof window !== 'undefined') {
       return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
     }
 
+    const API_KEY = process.env.API_KEY; // 如果有專用的 YouTube Key 也可以分開
+    if (!API_KEY) {
+      console.warn("[TrendSearcher] Missing API_KEY, using mocks.");
+      return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
+    }
+
     try {
-      const { google } = await import('googleapis');
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      const fetchYT = async (q: string) => {
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(q)}&type=video&videoDuration=short&maxResults=5&order=viewCount&key=${API_KEY}&regionCode=${config.regionCode || 'TW'}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        
+        if (data.error) throw new Error(data.error.message);
+        
+        const videoIds = (data.items || []).map((i: any) => i.id.videoId).join(',');
+        if (!videoIds) return [];
 
-      if (!clientId || !config.auth) {
-        console.warn("[TrendSearcher] 無授權資訊，使用模擬數據。");
-        return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
-      }
+        const statsUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id=${videoIds}&key=${API_KEY}`;
+        const statsRes = await fetch(statsUrl);
+        const statsData = await statsRes.json();
 
-      const auth = new google.auth.OAuth2(clientId, clientSecret);
-      auth.setCredentials(config.auth);
-      const service = google.youtube({ version: 'v3', auth });
-
-      // 軌道 A：垂直利基搜尋
-      const nicheQuery = `#shorts ${config.niche || 'AI'}`;
-      const nicheRes = await service.search.list({
-        part: ['snippet'],
-        q: nicheQuery,
-        type: ['video'],
-        regionCode: config.regionCode || 'TW',
-        maxResults: 5,
-        order: 'viewCount'
-      });
-
-      // 軌道 B：全域熱門搜尋 (不限主題)
-      const globalRes = await service.search.list({
-        part: ['snippet'],
-        q: '#shorts',
-        type: ['video'],
-        regionCode: config.regionCode || 'TW',
-        maxResults: 5,
-        order: 'viewCount'
-      });
-
-      const processItems = async (items: any[]) => {
-        const ids = items.map(i => i.id?.videoId).filter(Boolean);
-        if (ids.length === 0) return [];
-        const vRes = await service.videos.list({ part: ['snippet', 'statistics'], id: ids });
-        return (vRes.data.items || []).map(v => ({
-          id: v.id || 'unknown',
-          title: v.snippet?.title || 'No Title',
-          hashtags: v.snippet?.tags || [],
-          view_count: parseInt(v.statistics?.viewCount || '0', 10),
+        return (statsData.items || []).map((v: any) => ({
+          id: v.id,
+          title: v.snippet.title,
+          hashtags: v.snippet.tags || [],
+          view_count: parseInt(v.statistics.viewCount || '0', 10),
           region: config.regionCode,
           view_growth_rate: 1.5
         }));
       };
 
-      return {
-        nicheTrends: await processItems(nicheRes.data.items || []),
-        globalTrends: await processItems(globalRes.data.items || [])
-      };
+      const [nicheTrends, globalTrends] = await Promise.all([
+        fetchYT(`#shorts ${config.niche}`),
+        fetchYT(`#shorts trending`)
+      ]);
 
+      return { nicheTrends, globalTrends };
     } catch (e: any) {
-      console.error("[TrendSearcher] API Error:", e.message);
+      console.error("[TrendSearcher Error]:", e.message);
       return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
     }
   }
 
   private getMockData(type: string): ShortsData[] {
     return [{
-      id: "mock_" + type,
-      title: type === 'niche' ? "利基市場高流量影片" : "全域爆紅病毒影片",
+      id: "mock_" + type + "_" + Date.now(),
+      title: type === 'niche' ? "利基市場高流量影片 (模擬)" : "全域爆紅病毒影片 (模擬)",
       hashtags: ["#shorts"],
       view_count: 99999,
       view_growth_rate: 2.0

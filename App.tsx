@@ -18,7 +18,6 @@ const App: React.FC = () => {
   const abortControllers = useRef<Record<string, AbortController>>({});
   const [globalLog, setGlobalLog] = useState<string[]>([]);
 
-  // Derived state to find the channel currently being edited
   const editingChannel = channels.find(c => c.id === editingCoreId) || null;
 
   const addLog = (msg: string) => {
@@ -26,7 +25,6 @@ const App: React.FC = () => {
     setGlobalLog(p => [`[${now.toLocaleTimeString()}] ${msg}`, ...p].slice(0, 50));
   };
 
-  // Function to delete a channel core
   const deleteChannel = (id: string) => {
     if (window.confirm("核彈警告：這將移除此核心數據。繼續？")) {
       setChannels(prev => prev.filter(c => c.id !== id));
@@ -48,6 +46,7 @@ const App: React.FC = () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ code })
           });
+          if (!res.ok) throw new Error(await res.text());
           const data = await res.json();
           if (data.success) {
             setChannels(prev => prev.map(c => c.id === pendingId ? { ...c, auth: data.tokens } : c));
@@ -86,17 +85,26 @@ const App: React.FC = () => {
 
     try {
       updateChannel(channel.id, { status: 'running', step: 10, lastLog: '正在啟動高級模型分析與策略建模...' });
+      
+      // Stage 1: Analyze
       const r1 = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: 'analyze', channel }),
         signal: controller.signal
       });
+      
+      if (!r1.ok) {
+        const errorText = await r1.text();
+        throw new Error(`分析階段伺服器錯誤: ${errorText.substring(0, 50)}...`);
+      }
+      
       const d1 = await r1.json();
       if (!d1.success) throw new Error(d1.error);
       
       addLog(`🧠 [${channel.name}] 使用 ${d1.modelUsed} 完成策略：${d1.metadata.strategy_note}`);
       
+      // Stage 2: Render & Upload
       updateChannel(channel.id, { step: 40, lastLog: `模型(${d1.modelUsed}) 渲染中...` });
       const r2 = await fetch('/api/pipeline', {
         method: 'POST',
@@ -104,6 +112,12 @@ const App: React.FC = () => {
         body: JSON.stringify({ stage: 'render_and_upload', channel, metadata: d1.metadata }),
         signal: controller.signal
       });
+
+      if (!r2.ok) {
+        const errorText = await r2.text();
+        throw new Error(`渲染階段伺服器錯誤: ${errorText.substring(0, 50)}...`);
+      }
+
       const d2 = await r2.json();
       if (!d2.success) throw new Error(d2.error);
 
