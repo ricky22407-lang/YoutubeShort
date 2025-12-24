@@ -104,12 +104,24 @@ export default async function handler(req: any, res: any) {
     switch (stage) {
       case 'analyze': {
         const trends = await getTrends(channel.niche, channel.regionCode, API_KEY);
+        
+        // 強制語言邏輯
+        const targetLang = channel.language === 'en' ? 'English' : 'Traditional Chinese (zh-TW)';
+        const langConstraint = channel.language === 'en' 
+          ? "CRITICAL: The fields 'title' and 'desc' MUST be written in ENGLISH." 
+          : "重要：'title' 與 'desc' 欄位必須使用 繁體中文 (zh-TW)。";
 
         const analysisParams = {
-          contents: `目標利基: ${channel.niche}。趨勢數據: ${JSON.stringify(trends)}。
-          任務：請結合「全球短影音流量密碼」與「${channel.niche} 的核心靈魂」產出策略。
-          注意：不要過度追求反差而失去該利基原有的美感或特色。
-          請產出 JSON：{ "prompt": "視覺描述", "title": "標題", "desc": "描述", "strategy_note": "策略說明" }。`,
+          contents: `Target Niche: ${channel.niche}. 
+          Current Trends Data: ${JSON.stringify(trends)}.
+          
+          TASK: Create a viral strategy for a YouTube Shorts channel.
+          Output Language: ${targetLang}.
+          ${langConstraint}
+          
+          Note: Maintain the aesthetic essence of the ${channel.niche} niche while leveraging viral patterns.
+          
+          Return JSON: { "prompt": "visual description for video gen", "title": "viral title", "desc": "optimized description with hashtags", "strategy_note": "explanation" }.`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
