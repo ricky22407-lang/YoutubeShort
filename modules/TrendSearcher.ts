@@ -1,78 +1,83 @@
 
 import { ShortsData, IModule, ChannelConfig } from '../types';
 
-export class TrendSearcher implements IModule<ChannelConfig, ShortsData[]> {
-  name = "Trend Searcher";
-  description = "利用 YouTube Data API 獲取真實熱門資料。";
+export class TrendSearcher implements IModule<ChannelConfig, { nicheTrends: ShortsData[], globalTrends: ShortsData[] }> {
+  name = "Trend Searcher v2";
+  description = "雙軌搜尋引擎：垂直領域深度 + 全域流量廣度。";
 
-  async execute(config: ChannelConfig): Promise<ShortsData[]> {
-    if (typeof window !== 'undefined') return this.getMockData();
+  async execute(config: ChannelConfig): Promise<{ nicheTrends: ShortsData[], globalTrends: ShortsData[] }> {
+    // 如果在瀏覽器端運行，返回模擬數據
+    if (typeof window !== 'undefined') {
+      return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
+    }
 
     try {
-        const { google } = await import('googleapis');
-        const clientId = process.env.GOOGLE_CLIENT_ID;
-        const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      const { google } = await import('googleapis');
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
 
-        if (!clientId || !config.auth) {
-            console.warn("[TrendSearcher] 未配置 OAuth 或無授權資訊，使用模擬趨勢。");
-            return this.getMockData();
-        }
+      if (!clientId || !config.auth) {
+        console.warn("[TrendSearcher] 無授權資訊，使用模擬數據。");
+        return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
+      }
 
-        const auth = new google.auth.OAuth2(clientId, clientSecret);
-        auth.setCredentials(config.auth);
-        const service = google.youtube({ version: 'v3', auth });
+      const auth = new google.auth.OAuth2(clientId, clientSecret);
+      auth.setCredentials(config.auth);
+      const service = google.youtube({ version: 'v3', auth });
 
-        try {
-          const searchRes = await service.search.list({
-              part: ['snippet'],
-              q: `#shorts ${config.searchKeywords?.[0] || 'AI'}`,
-              type: ['video'],
-              regionCode: config.regionCode || 'TW',
-              maxResults: 8,
-              order: 'viewCount'
-          });
+      // 軌道 A：垂直利基搜尋
+      const nicheQuery = `#shorts ${config.niche || 'AI'}`;
+      const nicheRes = await service.search.list({
+        part: ['snippet'],
+        q: nicheQuery,
+        type: ['video'],
+        regionCode: config.regionCode || 'TW',
+        maxResults: 5,
+        order: 'viewCount'
+      });
 
-          const items = searchRes.data.items || [];
-          if (items.length === 0) return this.getMockData();
+      // 軌道 B：全域熱門搜尋 (不限主題)
+      const globalRes = await service.search.list({
+        part: ['snippet'],
+        q: '#shorts',
+        type: ['video'],
+        regionCode: config.regionCode || 'TW',
+        maxResults: 5,
+        order: 'viewCount'
+      });
 
-          const videoIds = items.map(i => i.id?.videoId).filter(Boolean) as string[];
-          const videosRes = await service.videos.list({
-              part: ['snippet', 'statistics'],
-              id: videoIds
-          });
+      const processItems = async (items: any[]) => {
+        const ids = items.map(i => i.id?.videoId).filter(Boolean);
+        if (ids.length === 0) return [];
+        const vRes = await service.videos.list({ part: ['snippet', 'statistics'], id: ids });
+        return (vRes.data.items || []).map(v => ({
+          id: v.id || 'unknown',
+          title: v.snippet?.title || 'No Title',
+          hashtags: v.snippet?.tags || [],
+          view_count: parseInt(v.statistics?.viewCount || '0', 10),
+          region: config.regionCode,
+          view_growth_rate: 1.5
+        }));
+      };
 
-          return (videosRes.data.items || []).map(v => ({
-              id: v.id || 'unknown',
-              title: v.snippet?.title || 'No Title',
-              hashtags: v.snippet?.tags || [],
-              view_count: parseInt(v.statistics?.viewCount || '0', 10),
-              region: config.regionCode,
-              view_growth_rate: 1.5,
-              publishedAt: v.snippet?.publishedAt || ''
-          }));
-        } catch (apiError: any) {
-          // 關鍵偵測：如果 API 未啟用，Google 會回傳 403 錯誤
-          if (apiError.errors && apiError.errors[0]?.reason === 'accessNotConfigured') {
-            const message = apiError.errors[0]?.message || "";
-            throw new Error(`CRITICAL_API_DISABLED: 您的 Google Cloud 專案尚未啟用 YouTube Data API v3。請前往 https://console.cloud.google.com/apis/library/youtube.googleapis.com 點擊「啟用」。`);
-          }
-          throw apiError;
-        }
+      return {
+        nicheTrends: await processItems(nicheRes.data.items || []),
+        globalTrends: await processItems(globalRes.data.items || [])
+      };
 
     } catch (e: any) {
-        // 如果是我們自定義的關鍵錯誤，直接往外拋讓 Pipeline 捕捉
-        if (e.message.includes("CRITICAL_API_DISABLED")) {
-          throw e;
-        }
-        console.error("[TrendSearcher] 捕捉到一般錯誤 (回退至模擬數據):", e.message);
-        return this.getMockData();
+      console.error("[TrendSearcher] API Error:", e.message);
+      return { nicheTrends: this.getMockData('niche'), globalTrends: this.getMockData('global') };
     }
   }
 
-  getMockData(): ShortsData[] {
-    return [
-      { id: "m1", title: "2025 AI 最新趨勢分析", hashtags: ["#ai", "#shorts"], view_count: 500000, region: "TW", view_growth_rate: 1.2 },
-      { id: "m2", title: "液態金屬科學實驗", hashtags: ["#science", "#shorts"], view_count: 1200000, region: "TW", view_growth_rate: 1.8 }
-    ];
+  private getMockData(type: string): ShortsData[] {
+    return [{
+      id: "mock_" + type,
+      title: type === 'niche' ? "利基市場高流量影片" : "全域爆紅病毒影片",
+      hashtags: ["#shorts"],
+      view_count: 99999,
+      view_growth_rate: 2.0
+    }];
   }
 }

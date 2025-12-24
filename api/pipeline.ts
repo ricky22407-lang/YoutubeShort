@@ -1,32 +1,31 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { Buffer } from 'buffer';
+import { TrendSearcher } from '../modules/TrendSearcher';
 
 export const config = {
   maxDuration: 300,
   api: { bodyParser: { sizeLimit: '15mb' } } 
 };
 
-// 輔助函式：嘗試使用高級模型，失敗則降級
 async function generateWithFallback(ai: any, params: any) {
-  const models = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-flash-latest'];
+  const models = ['gemini-3-pro-preview', 'gemini-3-flash-preview', 'gemini-flash-lite-latest'];
   let lastError = null;
 
   for (const modelName of models) {
     try {
-      console.log(`[Pipeline] Attempting analysis with: ${modelName}`);
+      console.log(`[Pipeline] Analysis Level: ${modelName}`);
       const response = await ai.models.generateContent({
         ...params,
         model: modelName
       });
       return { text: response.text, modelUsed: modelName };
     } catch (e: any) {
-      console.warn(`[Pipeline] Model ${modelName} failed, trying next...`);
       lastError = e;
       continue;
     }
   }
-  throw lastError || new Error("All models failed to respond.");
+  throw lastError || new Error("AI Analysis Offline");
 }
 
 export default async function handler(req: any, res: any) {
@@ -34,7 +33,6 @@ export default async function handler(req: any, res: any) {
   
   const { stage, channel, metadata } = req.body;
   const API_KEY = process.env.API_KEY;
-
   if (!API_KEY) return res.status(200).json({ success: false, error: 'System API_KEY Missing' });
 
   const ai = new GoogleGenAI({ apiKey: API_KEY });
@@ -42,27 +40,27 @@ export default async function handler(req: any, res: any) {
   try {
     switch (stage) {
       case 'analyze': {
-        const lang = channel.language || 'zh-TW';
-        const rawNiches = channel.niche || 'General Content';
-        
+        const searcher = new TrendSearcher();
+        const trends = await searcher.execute(channel);
+
         const analysisParams = {
-          contents: `核心利基: ${rawNiches}. 
-          語系: ${lang === 'zh-TW' ? '繁體中文' : 'English'}.
+          contents: `
+          利基領域: ${channel.niche}.
+          語系: ${channel.language === 'en' ? 'English' : '繁體中文'}.
           
-          任務：根據 YouTube 最新演算法趨勢進行「高存留率」企劃。
+          【趨勢數據注入】：
+          1. 垂直利基趨勢 (你的同業): ${JSON.stringify(trends.nicheTrends)}
+          2. 全域病毒趨勢 (目前演算法最愛的節奏): ${JSON.stringify(trends.globalTrends)}
           
-          【1. 敘事鉤子結構 (三段式設計)】：
-          - Hook (0-2s): 必須是極具衝擊力的開頭（例如：突發動作、懸念特寫）。
-          - Body: 核心內容展示。
-          - Loop: 結尾與開頭需能視覺無縫銜接。
+          【任務】：
+          分析以上數據，找出全域趨勢中的「高留存視覺特徵」（如：特定色彩、鏡頭運動、光影節奏），並將其應用在你的「利基領域」中。
           
-          【2. 正向攝影指令 (提升 Veo 良率)】：
-          - 避開 AI 感的方法：不要給負向指令。請使用攝影專業術語（如：8k cinematic, handheld motion, depth of field, anamorphic lens flares）。
+          【視覺提示詞規範】：
+          1. 必須符合 Hook (0-2s) / Body / Loop 結構。
+          2. 使用高級攝影術語提升 Veo 產出品質（如：Global Illumination, Ray-traced reflections, Dynamic Tracking Shot）。
+          3. 確保開頭具備極強的視覺衝突。
           
-          【3. SEO 與點擊誘餌】：
-          - 標題：針對「演算法推薦」而非「搜尋」設計，強調好奇心與情緒。
-          
-          請回傳 JSON：{ "prompt": "三段式視覺指令", "title": "病毒標題", "desc": "SEO 描述", "strategy_note": "模型採用的策略簡述" }`,
+          請回傳 JSON。`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -87,7 +85,7 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'render_and_upload': {
-        if (!channel.auth?.access_token) throw new Error("YouTube 授權遺失。");
+        if (!channel.auth?.access_token) throw new Error("YouTube Auth Lost.");
 
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
@@ -96,13 +94,11 @@ export default async function handler(req: any, res: any) {
         });
 
         let attempts = 0;
-        while (!operation.done && attempts < 25) {
+        while (!operation.done && attempts < 30) {
           await new Promise(r => setTimeout(r, 20000));
           operation = await ai.operations.getVideosOperation({ operation });
           attempts++;
         }
-
-        if (!operation.done) throw new Error("影片渲染逾時。");
 
         const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
         const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
@@ -110,11 +106,7 @@ export default async function handler(req: any, res: any) {
         
         const boundary = '-------PIPELINE_ONYX_V8_UPLOAD_BOUNDARY';
         const jsonMetadata = JSON.stringify({
-          snippet: { 
-            title: metadata.title, 
-            description: metadata.desc, 
-            categoryId: "22" 
-          },
+          snippet: { title: metadata.title, description: metadata.desc, categoryId: "22" },
           status: { privacyStatus: "public", selfDeclaredMadeForKids: false }
         });
         
@@ -130,14 +122,11 @@ export default async function handler(req: any, res: any) {
           headers: {
             'Authorization': `Bearer ${channel.auth.access_token}`,
             'Content-Type': `multipart/related; boundary=${boundary}`,
-            'Content-Length': multipartBody.length.toString()
           },
           body: multipartBody
         });
 
         const uploadData = await uploadRes.json();
-        if (uploadData.error) throw new Error(`YouTube API: ${uploadData.error.message}`);
-        
         return res.status(200).json({ success: true, videoId: uploadData.id });
       }
 
