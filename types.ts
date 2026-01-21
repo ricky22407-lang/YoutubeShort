@@ -3,6 +3,7 @@ export interface ChannelConfig {
   id: string;
   name: string;
   niche: string;
+  concept?: string; // 新增：詳細的風格與概念描述
   auth: any | null;
   status: 'idle' | 'running' | 'success' | 'error';
   lastLog?: string;

@@ -112,16 +112,36 @@ export default async function handler(req: any, res: any) {
           : "重要：'title' 與 'desc' 欄位必須使用 繁體中文 (zh-TW)。";
 
         const analysisParams = {
-          contents: `Target Niche: ${channel.niche}. 
-          Current Trends Data: ${JSON.stringify(trends)}.
+          contents: `Target Niche (for context): ${channel.niche}. 
+          
+          *** DETAILED CREATIVE CONCEPT (MUST FOLLOW THIS STYLE): ***
+          ${channel.concept || "No specific style provided, follow the niche strictly."}
+          
+          Current Trends Data (Reference): ${JSON.stringify(trends)}.
           
           TASK: Create a viral strategy for a YouTube Shorts channel.
           Output Language: ${targetLang}.
           ${langConstraint}
+
+          === STRATEGY 1: VIRAL TITLE PSYCHOLOGY ===
+          You MUST generate a 'title' using one of these frameworks (do not simply describe the video):
+          1. [Negativity Bias]: "Stop doing this...", "Why X is a lie..."
+          2. [Curiosity Gap]: "You won't believe...", "The secret about..."
+          3. [Specific Benefit]: "How to X in 5 seconds..."
+          4. [Direct Address]: "If you are Japanese, watch this..."
           
-          Note: Maintain the aesthetic essence of the ${channel.niche} niche while leveraging viral patterns.
+          === STRATEGY 2: VEO PROMPT ENGINEERING (RETENTION & REALISM) ===
+          To prevent AI hallucinations (morphing) and keep users watching, follow the '5S+Hook' Structure for the 'prompt':
           
-          Return JSON: { "prompt": "visual description for video gen", "title": "viral title", "desc": "optimized description with hashtags", "strategy_note": "explanation" }.`,
+          1. [Visual Hook]: The FIRST sentence must describe something visually striking or weird that happens immediately to stop the scroll.
+          2. [Style]: "Cinematic 4k, photorealistic, shot on 35mm lens, high fidelity, raw footage style".
+          3. [Subject]: ONE main subject only. Describe texture/lighting heavily.
+          4. [Action]: LOW MOTION / MICRO-MOVEMENTS. "Breathing", "Staring", "Wind blowing", "Slow pan". DO NOT use "transforming" or complex physics.
+          5. [Loopability]: Describe a scene that feels continuous or loops well.
+          
+          Example Prompt: "Cinematic 4k, photorealistic, extreme close-up of a samurai's eye widening in shock (Visual Hook). Rain dripping off a rusted iron helmet. Dark moody lighting, neon reflections in the background. The samurai stands perfectly still, heavy breathing, steam rising from armor (Low Motion). Shot on Arri Alexa, shallow depth of field."
+          
+          Return JSON: { "prompt": "Constructed based on 5S+Hook rules", "title": "Viral Psychology Title", "desc": "optimized description with hashtags", "strategy_note": "Explain which title framework used" }.`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {

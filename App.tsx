@@ -17,7 +17,10 @@ const I18N = {
     auto_deploy: "自動部署",
     save: "儲存設定",
     abort: "取消",
-    niche: "利基領域",
+    niche: "核心關鍵字 (搜尋用)",
+    niche_ph: "例如: Anime, Cat, Tech...",
+    concept: "詳細風格與概念 (AI 生成用)",
+    concept_ph: "例如：日本動漫的角色，擬真化並且結合日本日常生活的動作或背景，像是真實活在日本的vlog紀錄...",
     lang: "語系",
     name: "名稱",
     days: ["日", "一", "二", "三", "四", "五", "六"]
@@ -35,7 +38,10 @@ const I18N = {
     auto_deploy: "Auto Deploy",
     save: "Save Config",
     abort: "Abort",
-    niche: "Niche",
+    niche: "Core Keyword (For Search)",
+    niche_ph: "e.g., Anime, Cat, Tech...",
+    concept: "Detailed Concept (For AI)",
+    concept_ph: "e.g., Realistic anime characters in daily Japanese life...",
     lang: "Language",
     name: "Name",
     days: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -225,6 +231,10 @@ const App: React.FC = () => {
                       {c.autoDeploy && <span className="text-[10px] font-black px-4 py-1.5 bg-cyan-500/10 text-cyan-500 rounded-full border border-cyan-500/20">AUTO_PILOT_ON</span>}
                     </div>
 
+                    <p className="mt-4 text-[11px] text-zinc-600 line-clamp-2 italic border-l-2 border-zinc-800 pl-3">
+                      {c.concept || "No detailed concept configured."}
+                    </p>
+
                     <p className={`mt-6 text-[11px] font-bold leading-relaxed ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>
                       {c.lastLog || "Ready for deployment."}
                     </p>
@@ -295,8 +305,8 @@ const App: React.FC = () => {
                   <input id="n-name" defaultValue={editingChannel?.name} className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-2xl text-sm font-bold outline-none focus:border-cyan-500 transition-all" />
                 </div>
                 <div>
-                  <label className="text-[9px] font-black text-zinc-600 uppercase mb-3 block tracking-widest">{I18N['zh-TW'].niche}</label>
-                  <input id="n-niche" defaultValue={editingChannel?.niche} className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-2xl text-sm font-bold outline-none focus:border-cyan-500 transition-all" placeholder="Cat, Tech, ASMR..." />
+                  <label className="text-[9px] font-black text-cyan-600 uppercase mb-3 block tracking-widest">{I18N['zh-TW'].niche}</label>
+                  <input id="n-niche" defaultValue={editingChannel?.niche} placeholder={I18N['zh-TW'].niche_ph} className="w-full bg-zinc-900 border border-zinc-800 p-5 rounded-2xl text-sm font-bold outline-none focus:border-cyan-500 transition-all" />
                 </div>
                 <div>
                   <label className="text-[9px] font-black text-zinc-600 uppercase mb-3 block tracking-widest">{I18N['zh-TW'].lang}</label>
@@ -308,6 +318,17 @@ const App: React.FC = () => {
               </div>
 
               <div className="space-y-6">
+                 {/* Concept TextArea */}
+                 <div>
+                  <label className="text-[9px] font-black text-purple-400 uppercase mb-3 block tracking-widest">{I18N['zh-TW'].concept}</label>
+                  <textarea 
+                    id="n-concept" 
+                    defaultValue={editingChannel?.concept} 
+                    placeholder={I18N['zh-TW'].concept_ph} 
+                    className="w-full h-32 bg-zinc-900 border border-zinc-800 p-5 rounded-2xl text-xs font-bold leading-relaxed outline-none focus:border-purple-500 transition-all resize-none"
+                  />
+                </div>
+
                 <div className="p-6 bg-zinc-900/50 rounded-3xl border border-zinc-800">
                   <div className="flex justify-between items-center mb-6">
                     <label className="text-[9px] font-black text-zinc-600 uppercase tracking-widest">{I18N['zh-TW'].schedule}</label>
@@ -337,13 +358,14 @@ const App: React.FC = () => {
                 onClick={() => {
                   const name = (document.getElementById('n-name') as HTMLInputElement).value;
                   const niche = (document.getElementById('n-niche') as HTMLInputElement).value;
+                  const concept = (document.getElementById('n-concept') as HTMLTextAreaElement).value; // Get Concept
                   const lang = (document.getElementById('n-lang') as HTMLSelectElement).value;
                   const auto = (document.getElementById('n-auto') as HTMLInputElement).checked;
                   const times = (document.getElementById('n-times') as HTMLInputElement).value.split(',').map(t => t.trim());
                   const days = Array.from(document.querySelectorAll('.n-day-cb:checked')).map(el => parseInt(el.getAttribute('data-day')!));
 
                   const configPayload = {
-                    name, niche, language: lang as any, autoDeploy: auto,
+                    name, niche, concept, language: lang as any, autoDeploy: auto, // Save Concept
                     weeklySchedule: { days, times }
                   };
 
