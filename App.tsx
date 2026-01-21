@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { ChannelConfig } from './types';
+import { CharacterStudio } from './components/CharacterStudio';
 
 // 多語系配置
 const I18N = {
@@ -49,6 +50,7 @@ const I18N = {
 };
 
 const App: React.FC = () => {
+  const [view, setView] = useState<'core' | 'studio'>('core'); // 新增視圖狀態
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
   const [isEngineActive, setIsEngineActive] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -77,6 +79,16 @@ const App: React.FC = () => {
     try {
       updateChannel(channel.id, { status: 'running', step: 10, lastLog: '分析趨勢中...' });
       
+      // 判斷是否為角色自動化模式
+      if (channel.mode === 'character' && channel.characterProfile) {
+         // TODO: 未來可在此呼叫 character_pipeline 進行自動化生成
+         // 目前 Studio 主要是手動生成，排程功能僅儲存 Config
+         addLog(`⚠️ [${channel.name}] 角色自動化模式尚未完全連接至主管線，請在 Studio 中手動生成。`);
+         updateChannel(channel.id, { status: 'success', step: 100, lastLog: '任務已記錄 (等待實作)' });
+         setIsAnyChannelRendering(false);
+         return;
+      }
+
       const res = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -177,6 +189,11 @@ const App: React.FC = () => {
     localStorage.setItem('pilot_onyx_v8_data', JSON.stringify(channels));
   }, [channels]);
 
+  // 渲染 Character Studio
+  if (view === 'studio') {
+    return <CharacterStudio onBack={() => setView('core')} channels={channels} setChannels={setChannels} />;
+  }
+
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-cyan-500/30">
       {/* Navbar */}
@@ -185,11 +202,19 @@ const App: React.FC = () => {
           <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-black font-black italic shadow-2xl">S</div>
           <div>
             <h1 className="text-xl font-black italic tracking-tighter uppercase leading-none">ShortsPilot <span className="text-zinc-600">v8.15</span></h1>
-            <div className="flex items-center gap-2 mt-2 cursor-pointer" onClick={() => setIsEngineActive(!isEngineActive)}>
-              <div className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse' : 'bg-red-500'}`}></div>
-              <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">
-                {isEngineActive ? I18N['zh-TW'].engine_active : "ENGINE_STOPPED"}
-              </span>
+            <div className="flex items-center gap-4 mt-2">
+               <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsEngineActive(!isEngineActive)}>
+                <div className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse' : 'bg-red-500'}`}></div>
+                <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">
+                  {isEngineActive ? I18N['zh-TW'].engine_active : "ENGINE_STOPPED"}
+                </span>
+              </div>
+              
+              {/* View Switcher */}
+              <div className="flex bg-zinc-900 rounded-full p-1">
+                <button onClick={() => setView('core')} className="px-4 py-1 bg-zinc-800 text-white text-[9px] font-black rounded-full shadow-lg">CORE</button>
+                <button onClick={() => setView('studio')} className="px-4 py-1 text-zinc-500 text-[9px] font-black hover:text-purple-400 transition-colors">STUDIO</button>
+              </div>
             </div>
           </div>
         </div>
@@ -209,20 +234,30 @@ const App: React.FC = () => {
           )}
           {channels.map(c => {
             const t = I18N[c.language || 'zh-TW'];
+            const isCharacterMode = c.mode === 'character';
+
             return (
-              <div key={c.id} className={`bg-zinc-950 border rounded-[3rem] p-10 transition-all shadow-2xl ${c.status === 'running' ? 'border-cyan-500 shadow-cyan-500/10' : 'border-zinc-900'}`}>
+              <div key={c.id} className={`bg-zinc-950 border rounded-[3rem] p-10 transition-all shadow-2xl ${c.status === 'running' ? 'border-cyan-500 shadow-cyan-500/10' : isCharacterMode ? 'border-purple-900/50' : 'border-zinc-900'}`}>
                 <div className="flex flex-col md:flex-row justify-between items-start gap-8">
                   <div className="flex-1">
                     <div className="flex items-center gap-4">
-                      <h2 className="text-3xl font-black italic uppercase tracking-tighter">{c.name}</h2>
-                      <button onClick={() => { setEditingChannel(c); setIsModalOpen(true); }} className="p-2 hover:bg-zinc-900 rounded-full text-zinc-600 hover:text-white transition-colors">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-                      </button>
+                      <h2 className={`text-3xl font-black italic uppercase tracking-tighter ${isCharacterMode ? 'text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500' : ''}`}>
+                        {c.name}
+                      </h2>
+                      {!isCharacterMode && (
+                        <button onClick={() => { setEditingChannel(c); setIsModalOpen(true); }} className="p-2 hover:bg-zinc-900 rounded-full text-zinc-600 hover:text-white transition-colors">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+                        </button>
+                      )}
                     </div>
                     
                     <div className="flex flex-wrap gap-2 mt-4">
-                      <span className="text-[10px] font-black px-4 py-1.5 bg-zinc-900 text-zinc-400 rounded-full border border-zinc-800">{c.niche}</span>
-                      <span className="text-[10px] font-black px-4 py-1.5 bg-zinc-900 text-zinc-400 rounded-full border border-zinc-800 uppercase">{c.language}</span>
+                      {isCharacterMode ? (
+                        <span className="text-[10px] font-black px-4 py-1.5 bg-purple-900/20 text-purple-400 rounded-full border border-purple-800">VIRTUAL_IDOL_CORE</span>
+                      ) : (
+                        <span className="text-[10px] font-black px-4 py-1.5 bg-zinc-900 text-zinc-400 rounded-full border border-zinc-800">{c.niche}</span>
+                      )}
+                      
                       {c.auth ? (
                         <span className="text-[10px] font-black px-4 py-1.5 bg-green-500/10 text-green-500 rounded-full border border-green-500/20">OAUTH_CONNECTED</span>
                       ) : (
@@ -232,7 +267,7 @@ const App: React.FC = () => {
                     </div>
 
                     <p className="mt-4 text-[11px] text-zinc-600 line-clamp-2 italic border-l-2 border-zinc-800 pl-3">
-                      {c.concept || "No detailed concept configured."}
+                      {isCharacterMode ? `Automation Target: ${c.characterProfile?.name} / ${c.targetVibeId}` : (c.concept || "No detailed concept configured.")}
                     </p>
 
                     <p className={`mt-6 text-[11px] font-bold leading-relaxed ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>
@@ -242,11 +277,11 @@ const App: React.FC = () => {
 
                   <div className="flex flex-col items-end gap-3 min-w-[200px]">
                     <button 
-                      disabled={isAnyChannelRendering || !c.auth} 
+                      disabled={isAnyChannelRendering || !c.auth || isCharacterMode} 
                       onClick={() => runPipeline(c)} 
-                      className={`w-full py-5 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all ${c.status === 'running' ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed' : 'bg-white text-black hover:bg-cyan-500 hover:text-white shadow-xl hover:shadow-cyan-500/20'}`}
+                      className={`w-full py-5 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all ${c.status === 'running' || isCharacterMode ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed' : 'bg-white text-black hover:bg-cyan-500 hover:text-white shadow-xl hover:shadow-cyan-500/20'}`}
                     >
-                      {c.status === 'running' ? t.processing : t.manual_burst}
+                      {isCharacterMode ? "Auto-Task Active" : (c.status === 'running' ? t.processing : t.manual_burst)}
                     </button>
                     <button 
                       onClick={() => setChannels(channels.filter(x => x.id !== c.id))}
