@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ChannelConfig } from './types';
 import { CharacterStudio } from './components/CharacterStudio';
 
-// 多語系配置
+// 多語系配置 (UI 預設使用 zh-TW)
 const I18N = {
   'zh-TW': {
     establish: "建立核心",
@@ -206,14 +206,14 @@ const App: React.FC = () => {
                <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsEngineActive(!isEngineActive)}>
                 <div className={`w-2 h-2 rounded-full ${isEngineActive ? 'bg-cyan-500 animate-pulse' : 'bg-red-500'}`}></div>
                 <span className="text-[9px] font-black uppercase text-zinc-500 tracking-widest">
-                  {isEngineActive ? I18N['zh-TW'].engine_active : "ENGINE_STOPPED"}
+                  {isEngineActive ? I18N['zh-TW'].engine_active : "引擎已停止"}
                 </span>
               </div>
               
               {/* View Switcher */}
               <div className="flex bg-zinc-900 rounded-full p-1">
-                <button onClick={() => setView('core')} className="px-4 py-1 bg-zinc-800 text-white text-[9px] font-black rounded-full shadow-lg">CORE</button>
-                <button onClick={() => setView('studio')} className="px-4 py-1 text-zinc-500 text-[9px] font-black hover:text-purple-400 transition-colors">STUDIO</button>
+                <button onClick={() => setView('core')} className="px-4 py-1 bg-zinc-800 text-white text-[9px] font-black rounded-full shadow-lg">核心管理 (Core)</button>
+                <button onClick={() => setView('studio')} className="px-4 py-1 text-zinc-500 text-[9px] font-black hover:text-purple-400 transition-colors">影音工作室 (Studio)</button>
               </div>
             </div>
           </div>
@@ -230,7 +230,7 @@ const App: React.FC = () => {
         {/* Channel Cards */}
         <div className="flex-1 space-y-8">
           {channels.length === 0 && (
-            <div className="py-40 text-center opacity-20 font-black italic uppercase tracking-[1em]">Empty Cores</div>
+            <div className="py-40 text-center opacity-20 font-black italic uppercase tracking-[1em]">尚未建立核心</div>
           )}
           {channels.map(c => {
             const t = I18N[c.language || 'zh-TW'];
@@ -253,25 +253,25 @@ const App: React.FC = () => {
                     
                     <div className="flex flex-wrap gap-2 mt-4">
                       {isCharacterMode ? (
-                        <span className="text-[10px] font-black px-4 py-1.5 bg-purple-900/20 text-purple-400 rounded-full border border-purple-800">VIRTUAL_IDOL_CORE</span>
+                        <span className="text-[10px] font-black px-4 py-1.5 bg-purple-900/20 text-purple-400 rounded-full border border-purple-800">虛擬偶像核心</span>
                       ) : (
                         <span className="text-[10px] font-black px-4 py-1.5 bg-zinc-900 text-zinc-400 rounded-full border border-zinc-800">{c.niche}</span>
                       )}
                       
                       {c.auth ? (
-                        <span className="text-[10px] font-black px-4 py-1.5 bg-green-500/10 text-green-500 rounded-full border border-green-500/20">OAUTH_CONNECTED</span>
+                        <span className="text-[10px] font-black px-4 py-1.5 bg-green-500/10 text-green-500 rounded-full border border-green-500/20">已連結 YouTube</span>
                       ) : (
-                        <button onClick={() => { localStorage.setItem('pilot_pending_auth_id', c.id); window.location.href='/api/auth?action=url'; }} className="text-[10px] font-black px-4 py-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20">CONNECT_YOUTUBE</button>
+                        <button onClick={() => { localStorage.setItem('pilot_pending_auth_id', c.id); window.location.href='/api/auth?action=url'; }} className="text-[10px] font-black px-4 py-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20">連結 YouTube</button>
                       )}
-                      {c.autoDeploy && <span className="text-[10px] font-black px-4 py-1.5 bg-cyan-500/10 text-cyan-500 rounded-full border border-cyan-500/20">AUTO_PILOT_ON</span>}
+                      {c.autoDeploy && <span className="text-[10px] font-black px-4 py-1.5 bg-cyan-500/10 text-cyan-500 rounded-full border border-cyan-500/20">自動化開啟</span>}
                     </div>
 
                     <p className="mt-4 text-[11px] text-zinc-600 line-clamp-2 italic border-l-2 border-zinc-800 pl-3">
-                      {isCharacterMode ? `Automation Target: ${c.characterProfile?.name} / ${c.targetVibeId}` : (c.concept || "No detailed concept configured.")}
+                      {isCharacterMode ? `自動化目標: ${c.characterProfile?.name} / ${c.targetVibeId}` : (c.concept || "尚未設定詳細概念")}
                     </p>
 
                     <p className={`mt-6 text-[11px] font-bold leading-relaxed ${c.status === 'error' ? 'text-red-500' : 'text-zinc-500'}`}>
-                      {c.lastLog || "Ready for deployment."}
+                      {c.lastLog || "準備就緒"}
                     </p>
                   </div>
 
@@ -281,7 +281,7 @@ const App: React.FC = () => {
                       onClick={() => runPipeline(c)} 
                       className={`w-full py-5 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all ${c.status === 'running' || isCharacterMode ? 'bg-zinc-900 text-zinc-700 cursor-not-allowed' : 'bg-white text-black hover:bg-cyan-500 hover:text-white shadow-xl hover:shadow-cyan-500/20'}`}
                     >
-                      {isCharacterMode ? "Auto-Task Active" : (c.status === 'running' ? t.processing : t.manual_burst)}
+                      {isCharacterMode ? "自動任務執行中" : (c.status === 'running' ? t.processing : t.manual_burst)}
                     </button>
                     <button 
                       onClick={() => setChannels(channels.filter(x => x.id !== c.id))}

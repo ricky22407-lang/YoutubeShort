@@ -17,8 +17,8 @@ export default async function handler(req: any, res: any) {
   const API_KEY = process.env.API_KEY;
   if (!API_KEY) return res.status(500).json({ error: 'Missing API Key' });
 
-  // 接收新增的 customOutfit 與 customHair
-  const { character, vibe, customOutfit, customHair } = req.body;
+  // 接收 startImage (base64) 用於續寫
+  const { character, vibe, customOutfit, customHair, cameraAngle, startImage } = req.body;
   const images = character?.images || {};
   
   const hasImages = images.front || images.fullBody || images.side || character.baseImage;
@@ -45,60 +45,80 @@ export default async function handler(req: any, res: any) {
       }
     };
 
-    // 1. 智慧參考圖邏輯 (Smart Reference Logic)
-    // 如果有指定新服裝 (customOutfit)，我們 *故意* 不傳入全身圖 (fullBody)。
-    // 因為全身圖通常包含舊衣服，Veo 會感到困惑。
-    // 我們只保留「正面臉部」和「側面結構」，讓 Prompt 決定新衣服。
-    
+    // 1. Smart Reference Logic
+    const isCloseUp = cameraAngle === 'close_up';
+    const isOverride = (customOutfit && customOutfit.trim() !== '');
+
     if (images.front) referenceImages.push(processImage(images.front));
     
-    if (customOutfit && customOutfit.trim() !== '') {
-      console.log("Custom Outfit detected: Skipping Full Body reference image to avoid conflict.");
+    if (isCloseUp || isOverride) {
+      console.log(`Skipping Full Body Ref. Reason: ${isCloseUp ? 'Close-Up Mode' : 'Outfit Override'}`);
     } else {
-      // 只有在沒有換裝時，才使用全身參考圖
       if (images.fullBody) referenceImages.push(processImage(images.fullBody));
     }
     
     if (images.side) referenceImages.push(processImage(images.side));
     
-    // Fallback for legacy data
+    // Fallback
     if (referenceImages.length === 0 && character.baseImage) {
         referenceImages.push(processImage(character.baseImage));
     }
 
     const validRefs = referenceImages.filter(Boolean).slice(0, 3);
 
-    // 2. 建構高擬真 Prompt (High-Fidelity Prompt)
-    
-    // 構建外觀描述：如果有覆寫就用覆寫的，否則用原本的
+    // 2. Map Camera Angle
+    let compositionPrompt = "";
+    switch (cameraAngle) {
+        case 'close_up':
+            compositionPrompt = "Extreme Close-up shot, focusing on the face. Intimate distance. Shallow depth of field.";
+            break;
+        case 'waist_up':
+            compositionPrompt = "Medium Shot (Waist Up). Ideal for vlogging or conversation.";
+            break;
+        case 'full_body':
+        default:
+            compositionPrompt = "Wide Full Body Shot. Dynamic stance.";
+            break;
+    }
+
+    // 3. Construct Prompt
     const appearancePrompt = customOutfit || customHair 
       ? `Character is wearing ${customOutfit || 'original outfit'}, with ${customHair || 'original hair'} hairstyle.`
       : character.description;
 
     const fullPrompt = `
-      (Vertical 9:16 Aspect Ratio) Cinematic portrait video of ${appearancePrompt}.
+      (Vertical 9:16 Aspect Ratio) Cinematic video of ${appearancePrompt}.
       
-      ACTION & VIBE: ${vibe.prompt}
+      ACTION: ${vibe.prompt}
       
-      REALISM & TEXTURE (MANDATORY):
-      Shot on Arri Alexa Mini LF, 35mm prime lens, f/1.8 aperture.
-      Visible skin texture, pores, subsurface scattering (SSS) on skin.
-      Film grain, raw footage, chromatic aberration, soft volumetric lighting.
-      No plastic skin, no smooth AI look. Imperfect, realistic.
+      COMPOSITION & ANGLE:
+      ${compositionPrompt}
+      Subject is perfectly centered vertically.
       
-      EXPRESSIONS:
-      Natural micro-movements, slight breathing, blinking eyes, relaxed lips.
-      Character feels alive and present.
+      REALISM:
+      Shot on Arri Alexa Mini LF, 35mm prime lens.
+      Visible skin texture, pores.
       
-      COMPOSITION:
-      Subject perfectly centered, vertical framing. High fidelity.
+      ${startImage ? "CONTINUATION: This video continues from the provided start image. Maintain continuity." : ""}
     `;
 
-    console.log(`Starting Veo generation for ${character.name} with ${validRefs.length} refs. Override: ${!!customOutfit}`);
+    console.log(`Veo Request: [${cameraAngle}] ${vibe.prompt.substring(0, 50)}... Extension: ${!!startImage}`);
+
+    // 4. Config Veo
+    // 如果有 startImage，我們使用 Image-to-Video 模式
+    // 注意：Veo 的 image 參數可以是單純的 image input，不需要包在 referenceImages 裡
+    let inputImage = null;
+    if (startImage) {
+       const data = startImage.split(',')[1];
+       const mime = startImage.split(';')[0].split(':')[1] || 'image/png';
+       inputImage = { imageBytes: data, mimeType: mime };
+    }
 
     let operation = await ai.models.generateVideos({
       model: 'veo-3.1-generate-preview',
       prompt: fullPrompt,
+      // 如果有 startImage，傳入 image 參數
+      ...(inputImage && { image: inputImage }),
       config: {
         numberOfVideos: 1,
         resolution: '720p',

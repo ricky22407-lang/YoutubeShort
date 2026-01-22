@@ -8,59 +8,135 @@ interface CharacterStudioProps {
   setChannels: React.Dispatch<React.SetStateAction<ChannelConfig[]>>;
 }
 
-// 升級版：高擬真攝影 Prompt 模板
-const REALISM_BASE = "Shot on Arri Alexa Mini LF, 35mm lens, f/1.8, high fidelity, 8k raw footage. Skin texture details, subsurface scattering (SSS), natural imperfections, soft volumetric lighting.";
-const EXPRESSION_BASE = "Natural micro-expressions, slight breathing chest movement, natural eye blinking, looking at camera with soul, alive.";
+// 升級版：情境分類資料庫 (中文化)
+const VIBE_CATEGORIES: Record<string, { id: string; label: string; prompt: string }[]> = {
+  '表演': [
+    { id: 'cute_dance', label: '可愛舞蹈 (TikTok)', prompt: "performing a viral cute tiktok dance, rhythmic bouncing, making small heart gestures near cheek. Soft pastel bedroom background." },
+    { id: 'kpop_cool', label: '酷帥 K-Pop 舞步', prompt: "performing a sharp and powerful K-pop choreography, hair flowing naturally with movement. Confident gaze, slight smirk. Neon city street background." },
+    { id: 'idol_singing', label: '舞台演唱', prompt: "holding a microphone, singing emotionally with eyes closed then opening to look at camera. Stage lights, particles floating, concert atmosphere." },
+  ],
+  '生活': [
+    { id: 'cafe_date', label: '咖啡廳約會', prompt: "sitting at a cafe table, holding a latte, blowing on it gently, looking at camera and smiling shyly. Sunny window background, cozy vibes." },
+    { id: 'study_vlog', label: '讀書 / 工作', prompt: "sitting at a desk, writing in a notebook, tucking hair behind ear, focused expression, lo-fi aesthetic, warm desk lamp lighting." },
+    { id: 'eating', label: '吃播 / 進食', prompt: "holding a delicious burger/dessert, taking a small bite, eyes widening in delight, looking at camera and nodding. Restaurant background." },
+  ],
+  '電影感': [
+    { id: 'slow_wind', label: '微風吹拂 (慢動作)', prompt: "standing still, wind blowing through hair messily but beautifully. Melancholic expression, looking into distance then turning to camera. Sunset rooftop, golden hour, cinematic film grain." },
+    { id: 'rain_window', label: '雨天氛圍', prompt: "looking out a rainy window, finger tracing a raindrop on the glass, turning to look at camera with a sad smile. Blue hour lighting, reflective glass." },
+    { id: 'cyberpunk', label: '賽博龐克霓虹', prompt: "standing in a futuristic alleyway, neon signs reflecting on face. High contrast lighting, rain falling, looking cool and mysterious." },
+  ],
+  '互動': [
+    { id: 'waving', label: '打招呼 / 揮手', prompt: "waving hand enthusiastically at the camera, mouthing 'Hello!', bright smile, friendly and welcoming. Park background." },
+    { id: 'pointing', label: '手指指示 (文字疊加)', prompt: "standing to the side, pointing finger at the empty space (where text will be), nodding approvingly. useful for shorts overlays. Plain background." },
+    { id: 'scolding', label: '生氣 / 責罵', prompt: "crossing arms, puffing cheeks, looking at camera with a cute angry expression (tsundere style), stomping foot slightly." },
+  ]
+};
 
-const VIBES = [
-  { 
-    id: 'cute_dance', 
-    label: 'Cute / Aegyo Dance', 
-    prompt: `performing a viral cute tiktok dance, rhythmic bouncing, making small heart gestures near cheek. ${EXPRESSION_BASE} Soft pastel bedroom background, cozy atmosphere. ${REALISM_BASE}` 
-  },
-  { 
-    id: 'kpop_dynamic', 
-    label: 'K-Pop Dynamic', 
-    prompt: `performing a sharp and powerful K-pop choreography, hair flowing naturally with movement. Confident gaze, slight smirk. Neon city street night background, bokeh lights. ${REALISM_BASE} Dynamic camera movement.` 
-  },
-  { 
-    id: 'vlog_date', 
-    label: 'POV: Date Vlog', 
-    prompt: `POV shot holding hands with the camera (boyfriend perspective), walking forward then turning back to smile sweetly. Wind blowing through hair. Golden hour sunlight in a park, lens flare. ${EXPRESSION_BASE} ${REALISM_BASE}` 
-  },
-  { 
-    id: 'fashion_walk', 
-    label: 'Runway / Fashion Walk', 
-    prompt: `Walking towards camera like a high-end fashion model, confident stride, hips swaying naturally. Neutral but intense facial expression. High contrast studio lighting, grey background. ${REALISM_BASE}` 
-  }
+// 鏡位選擇中文化
+const CAMERA_ANGLES = [
+  { id: 'close_up', label: '特寫 (Face/ASMR)', desc: '聚焦於臉部與表情' },
+  { id: 'waist_up', label: '半身 (Vlog/訪談)', desc: '標準半身鏡頭' },
+  { id: 'full_body', label: '全身 (OOTD/舞蹈)', desc: '展示全身穿搭與動作' }
 ];
+
+interface VideoSegment {
+  id: string;
+  url: string;
+  prompt: string;
+}
 
 export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channels, setChannels }) => {
   const [character, setCharacter] = useState<CharacterProfile>({
     id: 'char_1',
-    name: 'New Character',
+    name: '新角色',
     description: 'A cute Korean girl, pink bob hair, white sweater, blue jeans, soft skin texture.',
     images: {}
   });
 
-  const [selectedVibe, setSelectedVibe] = useState(VIBES[0]);
+  // State for Scenario Director
+  const [activeCategory, setActiveCategory] = useState<string>('表演');
+  const [selectedVibe, setSelectedVibe] = useState(VIBE_CATEGORIES['表演'][0]);
+  const [customAction, setCustomAction] = useState('');
+  const [cameraAngle, setCameraAngle] = useState(CAMERA_ANGLES[1]); // Default Waist-up
+
+  // State for Style Override
   const [customOutfit, setCustomOutfit] = useState('');
   const [customHair, setCustomHair] = useState('');
   
+  // System State
   const [isGenerating, setIsGenerating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
   
+  // Timeline / Video State
+  const [segments, setSegments] = useState<VideoSegment[]>([]);
+  const [currentPlayingIndex, setCurrentPlayingIndex] = useState(0);
+  
+  const [logs, setLogs] = useState<string[]>([]);
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
+  
+  // Automation State
   const [scheduleTime, setScheduleTime] = useState('18:00');
   const [autoDeploy, setAutoDeploy] = useState(false);
 
+  // Refs
   const frontInputRef = useRef<HTMLInputElement>(null);
   const fullInputRef = useRef<HTMLInputElement>(null);
   const sideInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const addLog = (msg: string) => setLogs(p => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...p]);
+
+  // 初始化：選擇第一個可用頻道
+  useEffect(() => {
+    if (channels.length > 0 && !selectedChannelId) {
+      const valid = channels.find(c => c.auth);
+      if (valid) {
+        setSelectedChannelId(valid.id);
+        // 同步頻道的排程設定
+        if (valid.weeklySchedule && valid.weeklySchedule.times.length > 0) {
+           setScheduleTime(valid.weeklySchedule.times[0]);
+        }
+        setAutoDeploy(valid.autoDeploy || false);
+      } else {
+        // 如果沒有授權頻道，預設選第一個
+        setSelectedChannelId(channels[0].id);
+      }
+    }
+  }, [channels]);
+
+  // 切換頻道時同步設定
+  const handleChannelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const cid = e.target.value;
+    setSelectedChannelId(cid);
+    const target = channels.find(c => c.id === cid);
+    if (target) {
+        if (target.weeklySchedule && target.weeklySchedule.times.length > 0) {
+            setScheduleTime(target.weeklySchedule.times[0]);
+        }
+        setAutoDeploy(target.autoDeploy || false);
+    }
+  };
+
+  const handleSaveAutomation = () => {
+     if (!selectedChannelId) return;
+     
+     setChannels(prev => prev.map(c => {
+         if (c.id === selectedChannelId) {
+             return {
+                 ...c,
+                 autoDeploy: autoDeploy,
+                 weeklySchedule: {
+                     days: [0, 1, 2, 3, 4, 5, 6], // 預設每天
+                     times: [scheduleTime]
+                 },
+                 mode: 'character', // 標記為角色模式
+                 characterProfile: character // 儲存當前角色設定到頻道
+             };
+         }
+         return c;
+     }));
+     alert(`✅ 排程設定已儲存！\n頻道: ${channels.find(c => c.id === selectedChannelId)?.name}\n時間: 每天 ${scheduleTime}\n自動發布: ${autoDeploy ? '開啟' : '關閉'}`);
+  };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'front' | 'fullBody' | 'side') => {
     const file = e.target.files?.[0];
@@ -77,24 +153,62 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     }
   };
 
-  const handleCopyPrompt = (text: string) => {
-    navigator.clipboard.writeText(text);
-    addLog("📋 Prompt 已複製到剪貼簿！");
+  // 核心：擷取最後一幀
+  const captureLastFrame = async (videoUrl: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const video = document.createElement('video');
+      video.src = videoUrl;
+      video.crossOrigin = 'anonymous';
+      video.muted = true;
+      video.currentTime = 10000; // Seek to end (browser clamps to duration)
+      
+      video.onloadedmetadata = () => {
+        video.currentTime = video.duration - 0.1; // Seek to almost end
+      };
+
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+
+      video.onerror = (e) => reject(e);
+    });
   };
 
-  const handleGenerate = async () => {
+  const handleGenerate = async (isExtension = false) => {
     if (!character.images.front && !character.images.fullBody && !character.images.side) {
       alert("請至少上傳一張參考圖 (推薦：正面圖)！");
       return;
     }
     
     setIsGenerating(true);
-    setGeneratedVideo(null);
+    // 如果是全新生成，清空片段；如果是續寫，保留片段
+    if (!isExtension) {
+      setSegments([]);
+      setCurrentPlayingIndex(0);
+    }
+
     setLogs([]);
-    addLog("🚀 開始生成高擬真影片 (9:16)...");
+    addLog(isExtension ? "🚀 正在續寫下一段 (Extension)..." : "🚀 開始生成 Scene 1...");
+
+    let startImage = null;
+    if (isExtension && segments.length > 0) {
+      try {
+        addLog("🎞️ 正在擷取上一段影片的最後一幀...");
+        const lastUrl = segments[segments.length - 1].url;
+        startImage = await captureLastFrame(lastUrl);
+        addLog("✅ 擷取成功，將作為下一段的起始畫面 (無縫轉場)");
+      } catch (e) {
+        addLog("⚠️ 無法擷取最後一幀，將進行獨立生成");
+      }
+    }
     
-    if (customOutfit) addLog(`👗 啟用服裝覆寫: ${customOutfit}`);
-    if (customHair) addLog(`💇‍♀️ 啟用髮型覆寫: ${customHair}`);
+    if (customAction) addLog(`🎬 動作指令: ${customAction}`);
+    else addLog(`🎬 動作指令: ${selectedVibe.label}`);
 
     try {
       const response = await fetch('/api/character_pipeline', {
@@ -102,9 +216,14 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           character,
-          vibe: selectedVibe,
-          customOutfit, // 傳遞新服裝
-          customHair    // 傳遞新髮型
+          vibe: {
+             ...selectedVibe,
+             prompt: customAction || selectedVibe.prompt
+          },
+          cameraAngle: cameraAngle.id,
+          customOutfit, 
+          customHair,
+          startImage // 傳遞給後端
         })
       });
 
@@ -112,7 +231,19 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
       if (!data.success) throw new Error(data.error);
       
       addLog("✨ Veo 渲染完成！");
-      setGeneratedVideo(data.videoUrl);
+      const newSegment = {
+        id: `seg_${Date.now()}`,
+        url: data.videoUrl,
+        prompt: customAction || selectedVibe.label
+      };
+      
+      setSegments(prev => [...prev, newSegment]);
+      
+      // Auto play the new segment
+      if (isExtension) {
+        setCurrentPlayingIndex(prev => prev + 1);
+      }
+      
     } catch (e: any) {
       addLog(`❌ 錯誤: ${e.message}`);
     } finally {
@@ -120,15 +251,48 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     }
   };
 
+  // 播放器邏輯：自動播放下一段
+  const handleVideoEnded = () => {
+    if (currentPlayingIndex < segments.length - 1) {
+      setCurrentPlayingIndex(p => p + 1);
+    } else {
+      // Loop whole sequence
+      setCurrentPlayingIndex(0);
+    }
+  };
+
   const handleUpload = async () => {
-    if (!generatedVideo || !selectedChannelId) return;
+    if (segments.length === 0 || !selectedChannelId) return;
     const targetChannel = channels.find(c => c.id === selectedChannelId);
     if (!targetChannel?.auth) {
-      alert("請先選擇已授權的頻道！");
+      alert("請先選擇已授權的頻道！請返回核心管理介面進行連結。");
       return;
     }
 
     setIsUploading(true);
+
+    let finalVideoUrl = segments[0].url;
+
+    // 自動拼接邏輯
+    if (segments.length > 1) {
+       addLog(`🔄 檢測到 ${segments.length} 個片段，開始自動拼接 (FFmpeg)...`);
+       try {
+         const stitchRes = await fetch('/api/stitch_videos', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ segments: segments.map(s => s.url) })
+         });
+         const stitchData = await stitchRes.json();
+         if (!stitchData.success) throw new Error(stitchData.error);
+         
+         finalVideoUrl = stitchData.mergedVideoUrl;
+         addLog(`✅ 影片拼接完成 (大小: ${(finalVideoUrl.length / 1024 / 1024).toFixed(2)} MB)`);
+       } catch (e: any) {
+         addLog(`❌ 拼接失敗: ${e.message}。將僅上傳最後一段。`);
+         finalVideoUrl = segments[segments.length - 1].url;
+       }
+    }
+
     addLog("☁️ 正在上傳至 YouTube Shorts...");
 
     try {
@@ -136,10 +300,10 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          videoUrl: generatedVideo,
+          videoUrl: finalVideoUrl,
           auth: targetChannel.auth,
           metadata: {
-            title: `${character.name} - ${selectedVibe.label} #shorts`,
+            title: `${character.name} - ${customAction ? 'Custom' : selectedVibe.label} #shorts`,
             desc: `Generated by Virtual Idol Studio. Character: ${character.name} #AI #Veo`
           }
         })
@@ -157,64 +321,30 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     }
   };
 
-  const handleSaveAutomation = () => {
-    const newChannelConfig: ChannelConfig = {
-      id: `char_auto_${Date.now()}`,
-      name: `[Auto] ${character.name}`,
-      niche: "Virtual Idol",
-      language: 'zh-TW',
-      status: 'idle',
-      auth: selectedChannelId ? channels.find(c => c.id === selectedChannelId)?.auth : null,
-      autoDeploy: autoDeploy,
-      mode: 'character',
-      characterProfile: character,
-      targetVibeId: selectedVibe.id,
-      weeklySchedule: {
-        days: [0, 1, 2, 3, 4, 5, 6],
-        times: [scheduleTime]
-      }
-    };
-
-    setChannels(prev => [...prev, newChannelConfig]);
-    addLog(`💾 自動化任務已儲存至核心列表！`);
-    alert("任務已儲存！請回到 CORE 頁面查看並確保引擎已啟動。");
-  };
-
-  useEffect(() => {
-    if (channels.length > 0 && !selectedChannelId) {
-      const valid = channels.find(c => c.auth);
-      if (valid) setSelectedChannelId(valid.id);
-    }
-  }, [channels]);
-
   const desc = character.description || 'A cute girl';
+  
+  // 恢復示範圖邏輯
   const IMAGE_SLOTS = [
     { 
       type: 'front', 
-      label: '1. Face (Face ID)', 
+      label: '1. 正面 (臉部識別)', 
       ref: frontInputRef, 
       img: character.images.front,
       exampleImg: "https://duk.tw/qQcmo5.jpg", 
-      promptTitle: "Generate Portrait",
-      prompt: `Generate a photorealistic portrait of ${desc}, Medium shot, facing camera directly, eye contact, soft studio lighting, 8k resolution, raw photo, highly detailed skin texture.` 
     },
     { 
       type: 'fullBody', 
-      label: '2. Full Body (Outfit)', 
+      label: '2. 全身 (服裝參考)', 
       ref: fullInputRef, 
       img: character.images.fullBody,
-      exampleImg: "https://duk.tw/YWwlZx.jpg",
-      promptTitle: "Generate Full Body",
-      prompt: `Generate a full-body fashion photo of ${desc}, Wide angle full body shot, standing straight, facing forward, entire body visible from head to toe, 4k.` 
+      exampleImg: "https://duk.tw/YWwlZx.jpg", 
     },
     { 
       type: 'side', 
-      label: '3. 3-View (Structure)', 
+      label: '3. 側面 / 三視圖', 
       ref: sideInputRef, 
       img: character.images.side,
-      exampleImg: "https://duk.tw/pYDk21.jpg",
-      promptTitle: "Generate 3-View Sheet",
-      prompt: `Create a character reference sheet for ${desc}, Split screen image showing 3 views: Front, Side profile, Back view. Neutral pose, plain background.` 
+      exampleImg: "https://duk.tw/pYDk21.jpg", 
     }
   ];
 
@@ -225,34 +355,78 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
           <button onClick={onBack} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 transition-colors">←</button>
           <div>
             <h1 className="text-3xl font-black italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
-              VIRTUAL IDOL STUDIO
+              虛擬偶像工作室
             </h1>
-            <p className="text-xs text-purple-400/60 font-mono tracking-widest uppercase">Multi-Angle Reference Engine v2.0</p>
+            <p className="text-xs text-purple-400/60 font-mono tracking-widest uppercase">導演模式 v3.0</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        <div className="lg:col-span-5 space-y-8">
+        {/* Left Column: Controls */}
+        <div className="lg:col-span-5 space-y-6">
           
+          {/* 1. 發布頻道與排程設定 (Restored) */}
           <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
-            <h2 className="text-xs font-black text-purple-500 uppercase tracking-widest mb-2">1. Character Identity</h2>
+             <div className="flex justify-between items-center">
+                <h2 className="text-xs font-black text-green-500 uppercase tracking-widest">發布頻道 & 排程</h2>
+                {channels.find(c => c.id === selectedChannelId)?.auth ? (
+                    <span className="text-[9px] px-2 py-0.5 bg-green-900/30 text-green-400 rounded-full border border-green-800">已連結 YouTube</span>
+                ) : (
+                    <span className="text-[9px] px-2 py-0.5 bg-red-900/30 text-red-400 rounded-full border border-red-800">未連結 (請至核心管理)</span>
+                )}
+             </div>
+             
+             <select 
+               value={selectedChannelId} 
+               onChange={handleChannelChange}
+               className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm font-bold outline-none"
+             >
+                {channels.map(c => (
+                    <option key={c.id} value={c.id}>{c.name} ({c.niche})</option>
+                ))}
+             </select>
+
+             <div className="grid grid-cols-2 gap-4">
+                <div>
+                   <label className="text-[9px] text-zinc-500 font-bold block mb-1">每日發布時間</label>
+                   <input 
+                     type="time" 
+                     value={scheduleTime}
+                     onChange={(e) => setScheduleTime(e.target.value)}
+                     className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-center font-mono"
+                   />
+                </div>
+                <div>
+                   <label className="text-[9px] text-zinc-500 font-bold block mb-1">自動發布 (Auto-Deploy)</label>
+                   <button 
+                     onClick={() => setAutoDeploy(!autoDeploy)}
+                     className={`w-full py-2 rounded-lg text-xs font-black transition-all ${autoDeploy ? 'bg-cyan-500 text-black' : 'bg-zinc-900 text-zinc-600'}`}
+                   >
+                      {autoDeploy ? '已開啟 (ON)' : '已關閉 (OFF)'}
+                   </button>
+                </div>
+             </div>
+             <button 
+               onClick={handleSaveAutomation}
+               className="w-full py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-[10px] rounded-lg font-bold uppercase tracking-wider"
+             >
+                儲存自動化設定
+             </button>
+          </div>
+
+          {/* 2. Character Identity (With Example Images Restored) */}
+          <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
+            <h2 className="text-xs font-black text-purple-500 uppercase tracking-widest mb-2">角色設定 (Identity)</h2>
             <input 
               type="text" 
               value={character.name}
               onChange={e => setCharacter({...character, name: e.target.value})}
               className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm font-bold focus:border-purple-500 outline-none"
-              placeholder="Name"
+              placeholder="角色名稱 (例如: 小美)"
             />
-            <textarea 
-              value={character.description}
-              onChange={e => setCharacter({...character, description: e.target.value})}
-              className="w-full h-20 bg-black border border-zinc-800 p-3 rounded-xl text-xs text-zinc-400 focus:border-purple-500 outline-none resize-none"
-              placeholder="Physical description..."
-            />
-
-            <div className="grid grid-cols-3 gap-3 mt-4">
+             <div className="grid grid-cols-3 gap-3 mt-4">
               {IMAGE_SLOTS.map((slot) => (
                 <div key={slot.type} className="flex flex-col gap-2">
                   <div 
@@ -260,119 +434,132 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                     className={`aspect-[3/4] w-full rounded-xl border border-dashed flex flex-col items-center justify-center cursor-pointer relative overflow-hidden group transition-all ${slot.img ? 'border-purple-500/50' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/30'}`}
                   >
                     {slot.img ? (
-                      <>
-                        <img src={slot.img} className={`absolute inset-0 w-full h-full object-cover transition-opacity ${customOutfit && slot.type === 'fullBody' ? 'opacity-20 grayscale' : 'opacity-80'}`} />
-                        {customOutfit && slot.type === 'fullBody' && (
-                           <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-20">
-                             <div className="text-[8px] font-black text-white bg-red-600 px-2 py-1 rounded">IGNORED</div>
-                           </div>
-                        )}
-                      </>
+                      <img src={slot.img} className={`absolute inset-0 w-full h-full object-cover z-20`} />
                     ) : (
                       <>
-                        {slot.exampleImg && (
-                          <img src={slot.exampleImg} className="absolute inset-0 w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-50 transition-all pointer-events-none" />
-                        )}
-                        <div className="z-10 flex flex-col items-center drop-shadow-md">
+                        {/* 示範圖 (Example Image) 背景 */}
+                        <img src={slot.exampleImg} className="absolute inset-0 w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-50 transition-all z-0" />
+                        <div className="z-10 flex flex-col items-center drop-shadow-md bg-black/50 p-2 rounded-lg backdrop-blur-sm">
                           <div className="text-lg mb-1 shadow-black text-white">📷</div>
-                          <div className="text-[8px] font-bold text-white/80 uppercase text-center tracking-wider">{slot.label}</div>
+                          <div className="text-[8px] font-bold text-white uppercase text-center tracking-wider">{slot.label}</div>
                         </div>
                       </>
                     )}
                     <input ref={slot.ref} type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, slot.type as any)} />
                   </div>
-                  {/* Prompt Copy Button Removed to save space */}
                 </div>
               ))}
             </div>
           </div>
 
-          {/* New Style Override Section */}
+          {/* 3. Style Override */}
           <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
-            <h2 className="text-xs font-black text-pink-500 uppercase tracking-widest mb-2">2. Style Override (Cosplay)</h2>
+            <h2 className="text-xs font-black text-pink-500 uppercase tracking-widest mb-2">風格調整 (Override)</h2>
             <div className="grid grid-cols-2 gap-4">
-               <div>
-                  <label className="text-[9px] text-zinc-500 uppercase font-bold block mb-1">New Outfit</label>
-                  <input 
-                    type="text" 
-                    value={customOutfit}
-                    onChange={e => setCustomOutfit(e.target.value)}
-                    placeholder="e.g. Red evening gown"
-                    className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-white focus:border-pink-500 outline-none"
-                  />
-               </div>
-               <div>
-                  <label className="text-[9px] text-zinc-500 uppercase font-bold block mb-1">New Hair</label>
-                  <input 
-                    type="text" 
-                    value={customHair}
-                    onChange={e => setCustomHair(e.target.value)}
-                    placeholder="e.g. High ponytail"
-                    className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-white focus:border-pink-500 outline-none"
-                  />
-               </div>
+               <input 
+                 type="text" 
+                 value={customOutfit}
+                 onChange={e => setCustomOutfit(e.target.value)}
+                 placeholder="更換服裝 (例如: 紅洋裝)"
+                 className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-white focus:border-pink-500 outline-none"
+               />
+               <input 
+                 type="text" 
+                 value={customHair}
+                 onChange={e => setCustomHair(e.target.value)}
+                 placeholder="更換髮型 (例如: 金髮)"
+                 className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-white focus:border-pink-500 outline-none"
+               />
             </div>
-            <p className="text-[8px] text-zinc-600 mt-2">*Note: Setting a new outfit will ignore the 'Full Body' reference image to allow the change.</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-             <div className="col-span-2 bg-zinc-950 border border-zinc-800 p-5 rounded-[2rem]">
-                <h2 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">3. Action Vibe</h2>
-                <select 
-                  className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs font-bold outline-none"
-                  onChange={(e) => setSelectedVibe(VIBES.find(v => v.id === e.target.value) || VIBES[0])}
-                >
-                  {VIBES.map(v => <option key={v.id} value={v.id}>{v.label}</option>)}
-                </select>
+          {/* 4. Scenario Director */}
+          <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
+             <h2 className="text-xs font-black text-cyan-500 uppercase tracking-widest mb-2">導演指令 (Scenario)</h2>
+             <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+               {Object.keys(VIBE_CATEGORIES).map(cat => (
+                 <button 
+                   key={cat}
+                   onClick={() => setActiveCategory(cat)}
+                   className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider whitespace-nowrap transition-all ${activeCategory === cat ? 'bg-cyan-900/50 text-cyan-300 border border-cyan-500/50' : 'bg-zinc-900 text-zinc-500 hover:text-white'}`}
+                 >
+                   {cat}
+                 </button>
+               ))}
              </div>
-
-             <div className="col-span-2 bg-zinc-950 border border-zinc-800 p-5 rounded-[2rem]">
-                <h2 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">4. Target Channel</h2>
-                {channels.some(c => c.auth) ? (
-                  <select 
-                    value={selectedChannelId}
-                    onChange={(e) => setSelectedChannelId(e.target.value)}
-                    className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs font-bold text-green-500 outline-none"
-                  >
-                    <option value="">Select Connected Channel...</option>
-                    {channels.filter(c => c.auth).map(c => (
-                      <option key={c.id} value={c.id}>✅ {c.name}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <button 
-                    onClick={() => {
-                       const tempId = 'temp_studio_auth';
-                       localStorage.setItem('pilot_pending_auth_id', tempId);
-                       setChannels(p => [...p, { id: tempId, name: 'Studio Auth', niche: 'General', auth: null, status: 'idle', autoDeploy: false }]);
-                       window.location.href='/api/auth?action=url'; 
-                    }}
-                    className="w-full py-3 bg-red-600 text-white rounded-xl text-xs font-black uppercase hover:bg-red-500"
-                  >
-                    Connect YouTube
-                  </button>
-                )}
+             <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1 custom-scrollbar">
+               {VIBE_CATEGORIES[activeCategory].map(v => (
+                 <button
+                   key={v.id}
+                   onClick={() => { setSelectedVibe(v); setCustomAction(''); }} 
+                   className={`p-3 rounded-xl text-left border transition-all ${selectedVibe.id === v.id && !customAction ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-black border-zinc-800 text-zinc-400 hover:border-zinc-600'}`}
+                 >
+                   <div className="text-[10px] font-black uppercase truncate">{v.label}</div>
+                 </button>
+               ))}
+             </div>
+             <div className="relative">
+                <textarea 
+                  value={customAction}
+                  onChange={e => setCustomAction(e.target.value)}
+                  placeholder="輸入自定義動作描述..."
+                  className={`w-full h-20 bg-black border p-3 rounded-xl text-xs outline-none transition-all resize-none ${customAction ? 'border-cyan-500 text-white' : 'border-zinc-800 text-zinc-500'}`}
+                />
+             </div>
+             <div>
+                <label className="text-[9px] text-zinc-500 uppercase font-bold block mb-2">鏡位選擇 (Camera Angle)</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {CAMERA_ANGLES.map(angle => (
+                    <button
+                      key={angle.id}
+                      onClick={() => setCameraAngle(angle)}
+                      className={`py-2 px-1 rounded-lg border flex flex-col items-center gap-1 transition-all ${cameraAngle.id === angle.id ? 'bg-zinc-800 border-white text-white' : 'bg-black border-zinc-800 text-zinc-600'}`}
+                    >
+                       <span className="text-[9px] font-bold text-center">{angle.label}</span>
+                    </button>
+                  ))}
+                </div>
              </div>
           </div>
 
-          <button 
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className={`w-full py-6 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] transition-all shadow-xl ${isGenerating ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:scale-[1.02] hover:shadow-purple-500/25'}`}
-          >
-            {isGenerating ? 'Rendering (HD)...' : 'Generate Realism Preview'}
-          </button>
+          <div className="flex gap-4">
+            <button 
+              onClick={() => handleGenerate(false)}
+              disabled={isGenerating}
+              className={`flex-1 py-6 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] transition-all shadow-xl ${isGenerating ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:scale-[1.02] hover:shadow-purple-500/25'}`}
+            >
+              {isGenerating ? '渲染中...' : '生成新場景'}
+            </button>
+            
+            {segments.length > 0 && (
+              <button 
+                onClick={() => handleGenerate(true)}
+                disabled={isGenerating}
+                className={`flex-1 py-6 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] transition-all shadow-xl border border-cyan-500/50 text-cyan-400 hover:bg-cyan-950`}
+              >
+                + 續寫 (5秒)
+              </button>
+            )}
+          </div>
 
         </div>
 
+        {/* Right Column: Preview & Timeline */}
         <div className="lg:col-span-7 flex flex-col gap-6">
-          <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-[3rem] p-4 flex items-center justify-center relative overflow-hidden min-h-[500px]">
-            {generatedVideo ? (
-              <video src={generatedVideo} controls autoPlay loop className="h-full w-full object-contain rounded-[2rem] shadow-2xl" />
+          <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-[3rem] p-4 flex items-center justify-center relative overflow-hidden min-h-[600px]">
+            {segments.length > 0 ? (
+              <video 
+                ref={videoRef}
+                src={segments[currentPlayingIndex]?.url} 
+                controls 
+                autoPlay 
+                onEnded={handleVideoEnded}
+                className="h-full w-full object-contain rounded-[2rem] shadow-2xl" 
+              />
             ) : (
               <div className="text-center space-y-4 opacity-30">
                 <div className="text-6xl animate-pulse">🎬</div>
-                <div className="text-sm font-black uppercase tracking-widest">Veo 3.1 Realism Engine</div>
+                <div className="text-sm font-black uppercase tracking-widest">預覽畫面</div>
               </div>
             )}
              
@@ -384,43 +571,59 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                  </div>
               </div>
             )}
+            
+            {/* Timeline Indicator */}
+            {segments.length > 0 && (
+              <div className="absolute bottom-6 left-6 right-6 bg-black/50 backdrop-blur-md rounded-xl p-2 flex gap-2 overflow-x-auto">
+                 {segments.map((seg, idx) => (
+                   <div 
+                     key={seg.id}
+                     onClick={() => setCurrentPlayingIndex(idx)}
+                     className={`flex-shrink-0 w-16 h-12 rounded-lg border-2 cursor-pointer relative overflow-hidden group ${currentPlayingIndex === idx ? 'border-cyan-500' : 'border-zinc-700 opacity-50 hover:opacity-100'}`}
+                   >
+                     <video src={seg.url} className="w-full h-full object-cover pointer-events-none" />
+                     <div className="absolute bottom-0 inset-x-0 bg-black/70 text-[8px] text-white text-center font-bold">
+                       {idx + 1}
+                     </div>
+                   </div>
+                 ))}
+                 <div className="text-[10px] text-zinc-400 flex items-center px-2 font-mono">
+                    總長: ~{segments.length * 6}秒
+                 </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4">
              <button 
-               disabled={!generatedVideo || isUploading || !selectedChannelId}
+               disabled={segments.length === 0 || isUploading || !selectedChannelId}
                onClick={handleUpload}
-               className={`p-6 rounded-[2rem] border transition-all flex flex-col items-center justify-center gap-2 ${generatedVideo ? 'bg-white text-black border-white hover:bg-zinc-200' : 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'}`}
+               className={`p-6 rounded-[2rem] border transition-all flex flex-col items-center justify-center gap-2 ${segments.length > 0 ? 'bg-white text-black border-white hover:bg-zinc-200' : 'bg-zinc-900 text-zinc-600 border-zinc-800 cursor-not-allowed'}`}
              >
                <div className="text-xl">☁️</div>
-               <div className="text-[10px] font-black uppercase tracking-widest">{isUploading ? 'Uploading...' : 'Upload to YouTube'}</div>
+               <div className="text-[10px] font-black uppercase tracking-widest">
+                  {isUploading ? '上傳中...' : segments.length > 1 ? '自動拼接並上傳' : '上傳最後片段'}
+               </div>
              </button>
 
-             <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-[2rem] flex flex-col justify-between">
-               <div className="flex justify-between items-start mb-4">
-                 <div className="text-[10px] font-black text-zinc-500 uppercase">Automation</div>
-                 <input 
-                   type="checkbox" 
-                   checked={autoDeploy} 
-                   onChange={e => setAutoDeploy(e.target.checked)}
-                   className="w-5 h-5 accent-purple-500" 
-                 />
+             {/* Download All Button for stitching */}
+             {segments.length > 0 && (
+               <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-[2rem] flex flex-col items-center justify-center gap-2 text-center">
+                 <div className="text-[10px] text-zinc-400 mb-2 font-bold uppercase">需手動拼接</div>
+                 <div className="flex gap-2 w-full overflow-x-auto">
+                    {segments.map((s, i) => (
+                      <a 
+                        key={s.id}
+                        href={s.url} 
+                        download={`segment_${i+1}.mp4`}
+                        className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-[9px] text-white font-mono border border-zinc-700"
+                      >
+                        ⬇ 片段 {i+1}
+                      </a>
+                    ))}
+                 </div>
                </div>
-               <div className="flex gap-2 mb-3">
-                 <input 
-                   type="time" 
-                   value={scheduleTime} 
-                   onChange={e => setScheduleTime(e.target.value)}
-                   className="bg-black border border-zinc-700 rounded-lg px-2 py-1 text-xs font-mono text-white w-full"
-                 />
-               </div>
-               <button 
-                 onClick={handleSaveAutomation}
-                 className="w-full py-2 bg-purple-900/30 text-purple-300 border border-purple-500/30 rounded-lg text-[9px] font-black uppercase hover:bg-purple-900/50"
-               >
-                 Save Task
-               </button>
-             </div>
+             )}
           </div>
         </div>
       </div>
