@@ -8,31 +8,34 @@ interface CharacterStudioProps {
   setChannels: React.Dispatch<React.SetStateAction<ChannelConfig[]>>;
 }
 
+// 升級版：高擬真攝影 Prompt 模板
+const REALISM_BASE = "Shot on Arri Alexa Mini LF, 35mm lens, f/1.8, high fidelity, 8k raw footage. Skin texture details, subsurface scattering (SSS), natural imperfections, soft volumetric lighting.";
+const EXPRESSION_BASE = "Natural micro-expressions, slight breathing chest movement, natural eye blinking, looking at camera with soul, alive.";
+
 const VIBES = [
   { 
     id: 'cute_dance', 
     label: 'Cute / Aegyo Dance', 
-    prompt: "performing a cute viral tiktok dance, vertical full body shot, shy smile, making heart gestures, rhythmic swaying, soft lighting, bedroom background, 4k." 
+    prompt: `performing a viral cute tiktok dance, rhythmic bouncing, making small heart gestures near cheek. ${EXPRESSION_BASE} Soft pastel bedroom background, cozy atmosphere. ${REALISM_BASE}` 
   },
   { 
     id: 'kpop_dynamic', 
     label: 'K-Pop Dynamic', 
-    prompt: "performing a confident K-pop dance move, vertical framing, sharp hand movements, hair flip, dynamic low angle, neon city night background, stylish outfit." 
+    prompt: `performing a sharp and powerful K-pop choreography, hair flowing naturally with movement. Confident gaze, slight smirk. Neon city street night background, bokeh lights. ${REALISM_BASE} Dynamic camera movement.` 
   },
   { 
     id: 'vlog_date', 
     label: 'POV: Date Vlog', 
-    prompt: "POV shot holding hands with camera (boyfriend perspective), walking forward then turning back to smile sweetly, vertical video style, golden hour sunlight, park background, cinematic vlog." 
+    prompt: `POV shot holding hands with the camera (boyfriend perspective), walking forward then turning back to smile sweetly. Wind blowing through hair. Golden hour sunlight in a park, lens flare. ${EXPRESSION_BASE} ${REALISM_BASE}` 
   },
   { 
-    id: 'outfit_check', 
-    label: 'OOTD / Outfit Check', 
-    prompt: "doing a fashion model spin to show off outfit, vertical full body shot, posing confidently, high contrast studio lighting, 4k detailed texture, looking at camera." 
+    id: 'fashion_walk', 
+    label: 'Runway / Fashion Walk', 
+    prompt: `Walking towards camera like a high-end fashion model, confident stride, hips swaying naturally. Neutral but intense facial expression. High contrast studio lighting, grey background. ${REALISM_BASE}` 
   }
 ];
 
 export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channels, setChannels }) => {
-  // 嘗試從 LocalStorage 載入上次的設定
   const [character, setCharacter] = useState<CharacterProfile>({
     id: 'char_1',
     name: 'New Character',
@@ -41,17 +44,18 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
   });
 
   const [selectedVibe, setSelectedVibe] = useState(VIBES[0]);
+  const [customOutfit, setCustomOutfit] = useState('');
+  const [customHair, setCustomHair] = useState('');
+  
   const [isGenerating, setIsGenerating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   
-  // Auth & Schedule State
   const [selectedChannelId, setSelectedChannelId] = useState<string>('');
   const [scheduleTime, setScheduleTime] = useState('18:00');
   const [autoDeploy, setAutoDeploy] = useState(false);
 
-  // Refs for file inputs
   const frontInputRef = useRef<HTMLInputElement>(null);
   const fullInputRef = useRef<HTMLInputElement>(null);
   const sideInputRef = useRef<HTMLInputElement>(null);
@@ -87,15 +91,10 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     setIsGenerating(true);
     setGeneratedVideo(null);
     setLogs([]);
-    addLog("🚀 開始生成虛擬偶像影片 (9:16)...");
+    addLog("🚀 開始生成高擬真影片 (9:16)...");
     
-    // 收集所有有效圖片
-    const validImages = [];
-    if (character.images.front) validImages.push({ type: 'front', data: character.images.front });
-    if (character.images.fullBody) validImages.push({ type: 'full', data: character.images.fullBody });
-    if (character.images.side) validImages.push({ type: 'side', data: character.images.side });
-    
-    addLog(`ℹ️ 使用 ${validImages.length} 張參考圖進行混合`);
+    if (customOutfit) addLog(`👗 啟用服裝覆寫: ${customOutfit}`);
+    if (customHair) addLog(`💇‍♀️ 啟用髮型覆寫: ${customHair}`);
 
     try {
       const response = await fetch('/api/character_pipeline', {
@@ -103,7 +102,9 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           character,
-          vibe: selectedVibe
+          vibe: selectedVibe,
+          customOutfit, // 傳遞新服裝
+          customHair    // 傳遞新髮型
         })
       });
 
@@ -157,7 +158,6 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
   };
 
   const handleSaveAutomation = () => {
-    // 建立或更新一個專門跑這個角色的 Channel Config
     const newChannelConfig: ChannelConfig = {
       id: `char_auto_${Date.now()}`,
       name: `[Auto] ${character.name}`,
@@ -166,7 +166,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
       status: 'idle',
       auth: selectedChannelId ? channels.find(c => c.id === selectedChannelId)?.auth : null,
       autoDeploy: autoDeploy,
-      mode: 'character', // 標記為角色模式
+      mode: 'character',
       characterProfile: character,
       targetVibeId: selectedVibe.id,
       weeklySchedule: {
@@ -180,7 +180,6 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     alert("任務已儲存！請回到 CORE 頁面查看並確保引擎已啟動。");
   };
 
-  // 如果有透過 OAuth 回來，自動選取
   useEffect(() => {
     if (channels.length > 0 && !selectedChannelId) {
       const valid = channels.find(c => c.auth);
@@ -188,35 +187,31 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     }
   }, [channels]);
 
-  // 動態生成 Prompt 的數據結構
   const desc = character.description || 'A cute girl';
   const IMAGE_SLOTS = [
     { 
       type: 'front', 
-      label: '1. Face / Front', 
+      label: '1. Face (Face ID)', 
       ref: frontInputRef, 
       img: character.images.front,
-      // 使用真實的「正面」範例圖片
       exampleImg: "https://duk.tw/qQcmo5.jpg", 
       promptTitle: "Generate Portrait",
-      prompt: `Generate a photorealistic portrait of ${desc}, Medium shot (waist up), facing camera directly, eye contact, soft studio lighting, 8k resolution, raw photo.` 
+      prompt: `Generate a photorealistic portrait of ${desc}, Medium shot, facing camera directly, eye contact, soft studio lighting, 8k resolution, raw photo, highly detailed skin texture.` 
     },
     { 
       type: 'fullBody', 
-      label: '2. Full Body', 
+      label: '2. Full Body (Outfit)', 
       ref: fullInputRef, 
       img: character.images.fullBody,
-      // 使用真實的「全身」範例圖片
       exampleImg: "https://duk.tw/YWwlZx.jpg",
       promptTitle: "Generate Full Body",
       prompt: `Generate a full-body fashion photo of ${desc}, Wide angle full body shot, standing straight, facing forward, entire body visible from head to toe, 4k.` 
     },
     { 
       type: 'side', 
-      label: '3. Character Sheet', 
+      label: '3. 3-View (Structure)', 
       ref: sideInputRef, 
       img: character.images.side,
-      // 使用真實的「三視圖」範例圖片
       exampleImg: "https://duk.tw/pYDk21.jpg",
       promptTitle: "Generate 3-View Sheet",
       prompt: `Create a character reference sheet for ${desc}, Split screen image showing 3 views: Front, Side profile, Back view. Neutral pose, plain background.` 
@@ -225,27 +220,22 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
 
   return (
     <div className="min-h-screen bg-black text-white font-sans p-8 animate-fade-in">
-      {/* Header */}
       <div className="flex items-center justify-between mb-8 border-b border-purple-900/30 pb-6">
         <div className="flex items-center gap-4">
-          <button onClick={onBack} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 transition-colors">
-            ←
-          </button>
+          <button onClick={onBack} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 transition-colors">←</button>
           <div>
             <h1 className="text-3xl font-black italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
               VIRTUAL IDOL STUDIO
             </h1>
-            <p className="text-xs text-purple-400/60 font-mono tracking-widest uppercase">Multi-Angle Reference Engine</p>
+            <p className="text-xs text-purple-400/60 font-mono tracking-widest uppercase">Multi-Angle Reference Engine v2.0</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
-        {/* Left Column: Character & Input */}
         <div className="lg:col-span-5 space-y-8">
           
-          {/* 1. Character Identity */}
           <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
             <h2 className="text-xs font-black text-purple-500 uppercase tracking-widest mb-2">1. Character Identity</h2>
             <input 
@@ -259,24 +249,27 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
               value={character.description}
               onChange={e => setCharacter({...character, description: e.target.value})}
               className="w-full h-20 bg-black border border-zinc-800 p-3 rounded-xl text-xs text-zinc-400 focus:border-purple-500 outline-none resize-none"
-              placeholder="Physical description (e.g. Pink bob hair, white sweater...)"
+              placeholder="Physical description..."
             />
 
-            {/* 3-Slot Image Uploader with Copyable Prompts */}
             <div className="grid grid-cols-3 gap-3 mt-4">
               {IMAGE_SLOTS.map((slot) => (
                 <div key={slot.type} className="flex flex-col gap-2">
-                  {/* Upload Area */}
                   <div 
                     onClick={() => slot.ref.current?.click()}
                     className={`aspect-[3/4] w-full rounded-xl border border-dashed flex flex-col items-center justify-center cursor-pointer relative overflow-hidden group transition-all ${slot.img ? 'border-purple-500/50' : 'border-zinc-800 hover:border-zinc-600 bg-zinc-900/30'}`}
                   >
-                    {/* Render Example or Uploaded Image */}
                     {slot.img ? (
-                      <img src={slot.img} className="absolute inset-0 w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                      <>
+                        <img src={slot.img} className={`absolute inset-0 w-full h-full object-cover transition-opacity ${customOutfit && slot.type === 'fullBody' ? 'opacity-20 grayscale' : 'opacity-80'}`} />
+                        {customOutfit && slot.type === 'fullBody' && (
+                           <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-20">
+                             <div className="text-[8px] font-black text-white bg-red-600 px-2 py-1 rounded">IGNORED</div>
+                           </div>
+                        )}
+                      </>
                     ) : (
                       <>
-                        {/* Example Image Background */}
                         {slot.exampleImg && (
                           <img src={slot.exampleImg} className="absolute inset-0 w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-50 transition-all pointer-events-none" />
                         )}
@@ -288,33 +281,43 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                     )}
                     <input ref={slot.ref} type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, slot.type as any)} />
                   </div>
-
-                  {/* Copy Prompt Area */}
-                  <div className="bg-zinc-900/40 border border-zinc-800/50 rounded-lg p-2 flex flex-col gap-1 group/prompt hover:border-purple-500/30 transition-colors h-16 justify-between">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[7px] font-black text-zinc-500 uppercase truncate max-w-[50px]">{slot.promptTitle}</span>
-                      <button 
-                        onClick={() => handleCopyPrompt(slot.prompt)}
-                        className="text-[7px] text-purple-400 hover:text-white font-bold bg-purple-900/20 px-1.5 py-0.5 rounded transition-colors"
-                      >
-                        COPY
-                      </button>
-                    </div>
-                    <div className="text-[6px] text-zinc-600 font-mono leading-tight line-clamp-2 group-hover/prompt:text-zinc-400 select-all">
-                      {slot.prompt}
-                    </div>
-                  </div>
+                  {/* Prompt Copy Button Removed to save space */}
                 </div>
               ))}
             </div>
-            <p className="text-[9px] text-zinc-600 text-center mt-2">*Upload 3 angles for best Veo results. Description auto-fills prompt.</p>
           </div>
 
-          {/* 2. Vibe & Auth */}
+          {/* New Style Override Section */}
+          <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-4">
+            <h2 className="text-xs font-black text-pink-500 uppercase tracking-widest mb-2">2. Style Override (Cosplay)</h2>
+            <div className="grid grid-cols-2 gap-4">
+               <div>
+                  <label className="text-[9px] text-zinc-500 uppercase font-bold block mb-1">New Outfit</label>
+                  <input 
+                    type="text" 
+                    value={customOutfit}
+                    onChange={e => setCustomOutfit(e.target.value)}
+                    placeholder="e.g. Red evening gown"
+                    className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-white focus:border-pink-500 outline-none"
+                  />
+               </div>
+               <div>
+                  <label className="text-[9px] text-zinc-500 uppercase font-bold block mb-1">New Hair</label>
+                  <input 
+                    type="text" 
+                    value={customHair}
+                    onChange={e => setCustomHair(e.target.value)}
+                    placeholder="e.g. High ponytail"
+                    className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-white focus:border-pink-500 outline-none"
+                  />
+               </div>
+            </div>
+            <p className="text-[8px] text-zinc-600 mt-2">*Note: Setting a new outfit will ignore the 'Full Body' reference image to allow the change.</p>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
-             {/* Vibe */}
              <div className="col-span-2 bg-zinc-950 border border-zinc-800 p-5 rounded-[2rem]">
-                <h2 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">2. Action Vibe</h2>
+                <h2 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">3. Action Vibe</h2>
                 <select 
                   className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs font-bold outline-none"
                   onChange={(e) => setSelectedVibe(VIBES.find(v => v.id === e.target.value) || VIBES[0])}
@@ -323,9 +326,8 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                 </select>
              </div>
 
-             {/* Auth Selector */}
              <div className="col-span-2 bg-zinc-950 border border-zinc-800 p-5 rounded-[2rem]">
-                <h2 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">3. Target Channel</h2>
+                <h2 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-3">4. Target Channel</h2>
                 {channels.some(c => c.auth) ? (
                   <select 
                     value={selectedChannelId}
@@ -342,7 +344,6 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                     onClick={() => {
                        const tempId = 'temp_studio_auth';
                        localStorage.setItem('pilot_pending_auth_id', tempId);
-                       // Add a temp channel to accept the token if needed, or just redirect
                        setChannels(p => [...p, { id: tempId, name: 'Studio Auth', niche: 'General', auth: null, status: 'idle', autoDeploy: false }]);
                        window.location.href='/api/auth?action=url'; 
                     }}
@@ -354,18 +355,16 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
              </div>
           </div>
 
-          {/* Generate Button */}
           <button 
             onClick={handleGenerate}
             disabled={isGenerating}
             className={`w-full py-6 rounded-[1.5rem] font-black text-sm uppercase tracking-[0.2em] transition-all shadow-xl ${isGenerating ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-gradient-to-r from-purple-600 to-pink-600 hover:scale-[1.02] hover:shadow-purple-500/25'}`}
           >
-            {isGenerating ? 'Veo is Thinking...' : 'Generate Preview'}
+            {isGenerating ? 'Rendering (HD)...' : 'Generate Realism Preview'}
           </button>
 
         </div>
 
-        {/* Right Column: Preview & Actions */}
         <div className="lg:col-span-7 flex flex-col gap-6">
           <div className="flex-1 bg-zinc-950 border border-zinc-800 rounded-[3rem] p-4 flex items-center justify-center relative overflow-hidden min-h-[500px]">
             {generatedVideo ? (
@@ -373,11 +372,10 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
             ) : (
               <div className="text-center space-y-4 opacity-30">
                 <div className="text-6xl animate-pulse">🎬</div>
-                <div className="text-sm font-black uppercase tracking-widest">Veo 3.1 Preview</div>
+                <div className="text-sm font-black uppercase tracking-widest">Veo 3.1 Realism Engine</div>
               </div>
             )}
              
-            {/* Logs */}
             {isGenerating && (
               <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center z-10 p-8">
                  <div className="w-12 h-12 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -388,9 +386,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
             )}
           </div>
 
-          {/* Post-Generation Actions */}
           <div className="grid grid-cols-2 gap-4">
-             {/* Direct Upload */}
              <button 
                disabled={!generatedVideo || isUploading || !selectedChannelId}
                onClick={handleUpload}
@@ -400,7 +396,6 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                <div className="text-[10px] font-black uppercase tracking-widest">{isUploading ? 'Uploading...' : 'Upload to YouTube'}</div>
              </button>
 
-             {/* Automation Schedule */}
              <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-[2rem] flex flex-col justify-between">
                <div className="flex justify-between items-start mb-4">
                  <div className="text-[10px] font-black text-zinc-500 uppercase">Automation</div>

@@ -6,7 +6,7 @@ export const config = {
   maxDuration: 300, 
   api: {
     bodyParser: {
-      sizeLimit: '20mb', // 增加限制以支援多張圖片
+      sizeLimit: '20mb',
     },
   },
 };
@@ -17,10 +17,10 @@ export default async function handler(req: any, res: any) {
   const API_KEY = process.env.API_KEY;
   if (!API_KEY) return res.status(500).json({ error: 'Missing API Key' });
 
-  const { character, vibe } = req.body;
+  // 接收新增的 customOutfit 與 customHair
+  const { character, vibe, customOutfit, customHair } = req.body;
   const images = character?.images || {};
   
-  // 檢查至少有一張圖
   const hasImages = images.front || images.fullBody || images.side || character.baseImage;
   if (!hasImages) {
     return res.status(400).json({ error: 'Missing Reference Images' });
@@ -29,7 +29,6 @@ export default async function handler(req: any, res: any) {
   const ai = new GoogleGenAI({ apiKey: API_KEY });
 
   try {
-    // 1. 準備 Reference Images Array
     const referenceImages = [];
 
     const processImage = (base64Str: string) => {
@@ -46,38 +45,68 @@ export default async function handler(req: any, res: any) {
       }
     };
 
-    // 優先順序：Front -> Full -> Side
+    // 1. 智慧參考圖邏輯 (Smart Reference Logic)
+    // 如果有指定新服裝 (customOutfit)，我們 *故意* 不傳入全身圖 (fullBody)。
+    // 因為全身圖通常包含舊衣服，Veo 會感到困惑。
+    // 我們只保留「正面臉部」和「側面結構」，讓 Prompt 決定新衣服。
+    
     if (images.front) referenceImages.push(processImage(images.front));
-    if (images.fullBody) referenceImages.push(processImage(images.fullBody));
+    
+    if (customOutfit && customOutfit.trim() !== '') {
+      console.log("Custom Outfit detected: Skipping Full Body reference image to avoid conflict.");
+    } else {
+      // 只有在沒有換裝時，才使用全身參考圖
+      if (images.fullBody) referenceImages.push(processImage(images.fullBody));
+    }
+    
     if (images.side) referenceImages.push(processImage(images.side));
-    // 相容舊版
+    
+    // Fallback for legacy data
     if (referenceImages.length === 0 && character.baseImage) {
         referenceImages.push(processImage(character.baseImage));
     }
 
-    const validRefs = referenceImages.filter(Boolean).slice(0, 3); // Veo 上限通常為 3-4，保守設 3
+    const validRefs = referenceImages.filter(Boolean).slice(0, 3);
 
-    // 2. 建構 Prompt
-    const prompt = `(Vertical 9:16 Aspect Ratio) Cinematic video of ${character.description}. 
-    Action: ${vibe.prompt}. 
-    CRITICAL: Keep the character consistent with the provided reference images. 
-    Use the face from the Front view and the outfit/proportions from the Full Body view if provided.
-    COMPOSITION: Full body or 3/4 shot, perfectly centered in a vertical 9:16 frame. High quality, detailed texture, 35mm lens.`;
+    // 2. 建構高擬真 Prompt (High-Fidelity Prompt)
+    
+    // 構建外觀描述：如果有覆寫就用覆寫的，否則用原本的
+    const appearancePrompt = customOutfit || customHair 
+      ? `Character is wearing ${customOutfit || 'original outfit'}, with ${customHair || 'original hair'} hairstyle.`
+      : character.description;
 
-    console.log(`Starting Veo generation for ${character.name} with ${validRefs.length} refs.`);
+    const fullPrompt = `
+      (Vertical 9:16 Aspect Ratio) Cinematic portrait video of ${appearancePrompt}.
+      
+      ACTION & VIBE: ${vibe.prompt}
+      
+      REALISM & TEXTURE (MANDATORY):
+      Shot on Arri Alexa Mini LF, 35mm prime lens, f/1.8 aperture.
+      Visible skin texture, pores, subsurface scattering (SSS) on skin.
+      Film grain, raw footage, chromatic aberration, soft volumetric lighting.
+      No plastic skin, no smooth AI look. Imperfect, realistic.
+      
+      EXPRESSIONS:
+      Natural micro-movements, slight breathing, blinking eyes, relaxed lips.
+      Character feels alive and present.
+      
+      COMPOSITION:
+      Subject perfectly centered, vertical framing. High fidelity.
+    `;
+
+    console.log(`Starting Veo generation for ${character.name} with ${validRefs.length} refs. Override: ${!!customOutfit}`);
 
     let operation = await ai.models.generateVideos({
       model: 'veo-3.1-generate-preview',
-      prompt: prompt,
+      prompt: fullPrompt,
       config: {
         numberOfVideos: 1,
         resolution: '720p',
         aspectRatio: '9:16',
-        referenceImages: validRefs as any // Type assertion needed sometimes
+        referenceImages: validRefs as any
       }
     });
 
-    // 3. 輪詢
     let attempts = 0;
     while (!operation.done && attempts < 60) {
       await new Promise(resolve => setTimeout(resolve, 10000));
@@ -92,7 +121,6 @@ export default async function handler(req: any, res: any) {
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
     if (!downloadLink) throw new Error("No video URI returned");
 
-    // 4. 下載並轉發
     const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
     const videoBuffer = await videoRes.arrayBuffer();
     const videoBase64 = Buffer.from(videoBuffer).toString('base64');
