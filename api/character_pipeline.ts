@@ -61,8 +61,6 @@ export default async function handler(req: any, res: any) {
         case 'full_body': default: compositionPrompt = "Wide Full Body Shot, showing entire outfit and environment."; break;
     }
 
-    // 邏輯修正：如果指定了服裝，我們必須明確告訴模型「忽略參考圖的服裝，改穿這個」
-    // 使用 "Subject Description" + "Explicit Attire" 的結構
     const baseIdentity = character.description || "A virtual character";
     
     let attirePrompt = "";
@@ -91,11 +89,11 @@ export default async function handler(req: any, res: any) {
       ${startImage ? "CONTINUATION: Seamlessly continue the motion from the input image." : "Consistent facial features based on provided reference images, but allowing outfit changes as described."}
     `;
 
-    // 3. 執行生成 (分流處理以避免衝突)
+    // 3. 執行生成
     let operation;
     
     if (startImage) {
-        console.log("Mode: Image-to-Video Continuation (Ignoring Refs to prevent conflict)");
+        console.log("Mode: Image-to-Video Continuation");
         const data = startImage.split(',')[1];
         const mime = startImage.split(';')[0].split(':')[1] || 'image/png';
         
@@ -107,12 +105,11 @@ export default async function handler(req: any, res: any) {
             numberOfVideos: 1,
             resolution: '720p',
             aspectRatio: '9:16',
-            // 注意：續寫模式下不傳送 referenceImages，避免 400 錯誤
           }
         });
     } else {
-        console.log(`Mode: Character Reference Generation (${referenceImages.filter(Boolean).length} refs)`);
         const validRefs = referenceImages.filter(Boolean).slice(0, 3);
+        console.log(`Mode: Character Reference Generation (${validRefs.length} refs)`);
         
         operation = await ai.models.generateVideos({
           model: 'veo-3.1-generate-preview',
@@ -126,17 +123,28 @@ export default async function handler(req: any, res: any) {
         });
     }
 
-    // Polling logic...
+    // Polling logic
     let attempts = 0;
     while (!operation.done && attempts < 60) {
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise(resolve => setTimeout(resolve, 5000));
       operation = await ai.operations.getVideosOperation({ operation });
       attempts++;
     }
 
+    // 4. 錯誤檢查 (Critical Fix)
     if (!operation.done) throw new Error("Veo Generation Timed Out");
+    
+    if (operation.error) {
+        console.error("Veo API Error Details:", JSON.stringify(operation.error, null, 2));
+        throw new Error(`Veo Generation Failed: ${operation.error.message || 'Unknown Error'}`);
+    }
 
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) {
+        console.error("Veo Empty Response:", JSON.stringify(operation, null, 2));
+        throw new Error("Veo completed but returned no video URI. This usually means safety filters were triggered.");
+    }
+
     const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
     const videoBuffer = await videoRes.arrayBuffer();
     const videoBase64 = Buffer.from(videoBuffer).toString('base64');

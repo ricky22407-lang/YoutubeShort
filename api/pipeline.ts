@@ -144,7 +144,16 @@ export default async function handler(req: any, res: any) {
         }
         
         if (!operation.done) throw new Error("Veo Timeout");
+
+        if (operation.error) {
+             throw new Error(`Veo Generation Failed: ${operation.error.message}`);
+        }
+
         const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+        if (!downloadLink) {
+             throw new Error("Veo completed but returned no video URI.");
+        }
+
         const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
         const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
