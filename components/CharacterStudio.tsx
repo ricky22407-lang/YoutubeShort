@@ -61,7 +61,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
   
   // Agent Thinking State
   const [isThinking, setIsThinking] = useState(false);
-  const [isReflecting, setIsReflecting] = useState(false); // New state for reflection
+  const [isReflecting, setIsReflecting] = useState(false);
 
   const [agentIdea, setAgentIdea] = useState<{
       topic: string; 
@@ -69,7 +69,14 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
       outfit_idea: string; 
       hairstyle_idea: string;
       visual_style: string;
+      category: string;
   } | null>(null);
+
+  // Chat State
+  const [chatHistory, setChatHistory] = useState<{role: 'user' | 'ai', content: string}[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [isChatting, setIsChatting] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   // Studio / Editor State
   const [studioParams, setStudioParams] = useState({
@@ -88,6 +95,8 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
   const threeViewRef = useRef<HTMLInputElement>(null);
   const frontRef = useRef<HTMLInputElement>(null);
   const fullBodyRef = useRef<HTMLInputElement>(null);
+  const sideRef = useRef<HTMLInputElement>(null);
+  const backRef = useRef<HTMLInputElement>(null);
 
   // Load Channel Data
   useEffect(() => {
@@ -107,6 +116,13 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     }
   }, [selectedChannelId]);
 
+  // Scroll to bottom of chat
+  useEffect(() => {
+      if (chatBottomRef.current) {
+          chatBottomRef.current.scrollIntoView({ behavior: 'smooth' });
+      }
+  }, [chatHistory, activeTab]);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, type: keyof CharacterProfile['images']) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -124,11 +140,13 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
   const handleAgentThink = async () => {
     setIsThinking(true);
     setAgentIdea(null);
+    setChatHistory([]); // Reset chat on new idea
     try {
         const mockTrends = [{ id: '1', title: 'Viral Dance Challenge', hashtags: [], view_count: 1000000, view_growth_rate: 5 }];
         // @ts-ignore
         const decision = await AgentBrain.think(character, memory, mockTrends);
         setAgentIdea(decision);
+        setChatHistory([{ role: 'ai', content: `I've got a new idea: "${decision.topic}". What do you think, boss?` }]);
     } catch (e) {
         console.error(e);
         alert("Agent Brain Overload (Error)");
@@ -137,14 +155,35 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     }
   };
 
+  const handleChatSend = async () => {
+      if (!chatInput.trim() || !agentIdea) return;
+      
+      const userMsg = chatInput;
+      setChatHistory(prev => [...prev, { role: 'user', content: userMsg }]);
+      setChatInput('');
+      setIsChatting(true);
+
+      try {
+          const result = await AgentBrain.chat(character, agentIdea, userMsg);
+          setChatHistory(prev => [...prev, { role: 'ai', content: result.reply }]);
+          
+          if (result.updatedPlan) {
+              setAgentIdea(result.updatedPlan);
+          }
+      } catch (e) {
+          console.error(e);
+          setChatHistory(prev => [...prev, { role: 'ai', content: "(System Error: Brain connection lost)" }]);
+      } finally {
+          setIsChatting(false);
+      }
+  };
+
   const handleReflect = async () => {
       setIsReflecting(true);
       try {
-          // 模擬 API 延遲
           await new Promise(r => setTimeout(r, 1000));
           const newMemory = await AgentBrain.reflect(memory);
           setMemory(newMemory);
-          // Update global state immediately
           setChannels(prev => prev.map(c => c.id === selectedChannelId ? { ...c, agentMemory: newMemory } : c));
       } catch (e) {
           alert("Reflection Failed");
@@ -183,10 +222,9 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
           const data = await res.json();
           if (data.success && data.videoUrl) {
               setClips(prev => [...prev, { id: Date.now().toString(), url: data.videoUrl, prompt: studioParams.prompt }]);
-              // Clear start image after generation to avoid accidental loops
               setStudioParams(prev => ({ ...prev, startImage: null }));
           } else {
-              alert("Generation Failed: " + data.error);
+              alert("Generation Failed: " + (data.error || JSON.stringify(data)));
           }
       } catch (e: any) {
           alert("Error: " + e.message);
@@ -199,7 +237,6 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
       try {
           const lastFrame = await captureLastFrame(videoUrl);
           setStudioParams(prev => ({ ...prev, startImage: lastFrame }));
-          // Scroll top to show input
           window.scrollTo({ top: 0, behavior: 'smooth' });
       } catch (e) {
           alert("Failed to capture frame for continuation.");
@@ -233,7 +270,6 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
       if (!stitchedVideo && clips.length === 0) return;
       const targetVideo = stitchedVideo || clips[0].url;
       const channel = channels.find(c => c.id === selectedChannelId);
-      
       if (!channel?.auth) return alert("Please connect YouTube channel first.");
 
       try {
@@ -278,7 +314,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
           <button onClick={onBack} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 transition-colors">←</button>
           <div>
             <h1 className="text-3xl font-black italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
-              AI 經紀人系統 V9.5
+              AI 經紀人系統 V9.7
             </h1>
             <p className="text-xs text-purple-400/60 font-mono tracking-widest uppercase">Autonomous Idol Management</p>
           </div>
@@ -342,22 +378,40 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
 
                         {/* Secondary Images Grid */}
                         <div className="grid grid-cols-2 gap-3">
-                            {/* Front Face */}
                             <div 
                                 onClick={() => frontRef.current?.click()}
-                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600"
+                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600 group"
                             >
-                                {character.images.front ? <img src={character.images.front} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">正面特寫</div>}
+                                {character.images.front ? <img src={character.images.front} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">正面 (Front)</div>}
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] font-bold transition-opacity">更換</div>
                                 <input ref={frontRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'front')} />
                             </div>
 
-                            {/* Full Body */}
                             <div 
                                 onClick={() => fullBodyRef.current?.click()}
-                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600"
+                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600 group"
                             >
-                                {character.images.fullBody ? <img src={character.images.fullBody} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">全身穿搭</div>}
+                                {character.images.fullBody ? <img src={character.images.fullBody} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">全身 (Full)</div>}
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] font-bold transition-opacity">更換</div>
                                 <input ref={fullBodyRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'fullBody')} />
+                            </div>
+
+                            <div 
+                                onClick={() => sideRef.current?.click()}
+                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600 group"
+                            >
+                                {character.images.side ? <img src={character.images.side} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">側面 (Side)</div>}
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] font-bold transition-opacity">更換</div>
+                                <input ref={sideRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'side')} />
+                            </div>
+
+                            <div 
+                                onClick={() => backRef.current?.click()}
+                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600 group"
+                            >
+                                {character.images.back ? <img src={character.images.back} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">背面 (Back)</div>}
+                                <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-[10px] font-bold transition-opacity">更換</div>
+                                <input ref={backRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'back')} />
                             </div>
                         </div>
                     </div>
@@ -404,38 +458,75 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                  <div className="bg-zinc-950 border border-zinc-800 p-8 rounded-[2rem] relative overflow-hidden min-h-[400px]">
                     <div className="absolute top-0 right-0 p-10 opacity-10 text-[10rem]">🧠</div>
                     
-                    <div className="max-w-2xl mx-auto text-center space-y-8 relative z-10">
-                        <h2 className="text-3xl font-black italic">Agent Neural Core</h2>
-                        <div className="flex justify-center">
-                            <button onClick={handleAgentThink} disabled={isThinking} className={`px-12 py-6 rounded-full font-black text-sm uppercase tracking-[0.2em] shadow-2xl transition-all border ${isThinking ? 'bg-zinc-900 border-zinc-800 text-zinc-600 animate-pulse' : 'bg-white text-black border-white hover:scale-105'}`}>
-                                {isThinking ? 'Thinking...' : '觸發靈感 (Trigger Ideation)'}
-                            </button>
+                    <div className="max-w-3xl mx-auto space-y-8 relative z-10">
+                        <div className="text-center">
+                            <h2 className="text-3xl font-black italic">Agent Neural Core</h2>
+                            <div className="flex justify-center mt-4">
+                                <button onClick={handleAgentThink} disabled={isThinking} className={`px-12 py-6 rounded-full font-black text-sm uppercase tracking-[0.2em] shadow-2xl transition-all border ${isThinking ? 'bg-zinc-900 border-zinc-800 text-zinc-600 animate-pulse' : 'bg-white text-black border-white hover:scale-105'}`}>
+                                    {isThinking ? 'Thinking...' : '觸發靈感 (Trigger Ideation)'}
+                                </button>
+                            </div>
                         </div>
 
                         {agentIdea && (
-                            <div className="mt-8 bg-gradient-to-br from-purple-900/40 to-black border border-purple-500/30 p-8 rounded-3xl text-left animate-slide-down backdrop-blur-sm">
-                                <div className="flex items-start gap-6">
-                                    <div className="w-16 h-16 rounded-full bg-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-purple-500/30 text-2xl shrink-0">AI</div>
-                                    <div className="space-y-4 flex-1">
-                                        <div>
-                                           <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Generated Concept</div>
-                                           <h3 className="text-2xl font-black text-white leading-tight">"{agentIdea.topic}"</h3>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                                                <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">OOTD</div>
-                                                <div className="text-sm font-bold text-pink-300">👚 {agentIdea.outfit_idea}</div>
+                            <div className="space-y-4">
+                                {/* Idea Card */}
+                                <div className="bg-gradient-to-br from-purple-900/40 to-black border border-purple-500/30 p-8 rounded-3xl text-left animate-slide-down backdrop-blur-sm">
+                                    <div className="flex items-start gap-6">
+                                        <div className="w-16 h-16 rounded-full bg-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-purple-500/30 text-2xl shrink-0">AI</div>
+                                        <div className="space-y-4 flex-1">
+                                            <div>
+                                            <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Generated Concept</div>
+                                            <h3 className="text-2xl font-black text-white leading-tight">"{agentIdea.topic}"</h3>
                                             </div>
-                                            <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                                                <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">Hair</div>
-                                                <div className="text-sm font-bold text-blue-300">💇‍♀️ {agentIdea.hairstyle_idea}</div>
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                                                    <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">OOTD</div>
+                                                    <div className="text-sm font-bold text-pink-300">👚 {agentIdea.outfit_idea}</div>
+                                                </div>
+                                                <div className="bg-white/5 p-3 rounded-xl border border-white/10">
+                                                    <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">Hair</div>
+                                                    <div className="text-sm font-bold text-blue-300">💇‍♀️ {agentIdea.hairstyle_idea}</div>
+                                                </div>
                                             </div>
+                                            <p className="text-sm text-zinc-300 border-l-2 border-purple-500/30 pl-4 py-1">{agentIdea.reasoning}</p>
+                                            
+                                            <button onClick={transferIdeaToStudio} className="w-full mt-4 py-3 bg-white text-black font-black uppercase rounded-xl hover:bg-cyan-500 hover:text-white transition-colors">
+                                                👉 前往片場製作 (Produce This)
+                                            </button>
                                         </div>
-                                        <p className="text-sm text-zinc-300 border-l-2 border-purple-500/30 pl-4 py-1">{agentIdea.reasoning}</p>
-                                        
-                                        {/* Action Button: Go to Studio */}
-                                        <button onClick={transferIdeaToStudio} className="w-full mt-4 py-3 bg-white text-black font-black uppercase rounded-xl hover:bg-cyan-500 hover:text-white transition-colors">
-                                            👉 前往片場製作 (Produce This)
+                                    </div>
+                                </div>
+
+                                {/* Chat Interface */}
+                                <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-6 space-y-4 animate-fade-in">
+                                    <div className="text-[10px] font-bold text-zinc-500 uppercase text-center tracking-widest">Discussion Log</div>
+                                    <div className="max-h-64 overflow-y-auto space-y-3 px-2 custom-scrollbar">
+                                        {chatHistory.map((msg, i) => (
+                                            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                                <div className={`max-w-[80%] p-3 rounded-2xl text-xs font-medium ${msg.role === 'user' ? 'bg-zinc-800 text-white rounded-br-none' : 'bg-purple-900/30 text-purple-100 border border-purple-800/50 rounded-bl-none'}`}>
+                                                    {msg.content}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {isChatting && <div className="text-[10px] text-zinc-500 animate-pulse text-left">Agent is typing...</div>}
+                                        <div ref={chatBottomRef} />
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            value={chatInput} 
+                                            onChange={e => setChatInput(e.target.value)}
+                                            onKeyDown={e => e.key === 'Enter' && handleChatSend()}
+                                            disabled={isChatting}
+                                            placeholder="Give feedback (e.g., 'Make it more punk' or 'Change outfit')" 
+                                            className="flex-1 bg-black border border-zinc-800 rounded-full px-4 py-3 text-xs focus:border-purple-500 outline-none"
+                                        />
+                                        <button 
+                                            onClick={handleChatSend}
+                                            disabled={isChatting || !chatInput.trim()}
+                                            className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center font-bold hover:bg-purple-500 hover:text-white disabled:opacity-50 transition-colors"
+                                        >
+                                            ➤
                                         </button>
                                     </div>
                                 </div>
@@ -503,7 +594,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
             </div>
         )}
 
-        {/* === TAB 3: STUDIO & EDITOR === */}
+        {/* ... (Tab 3 remains unchanged) ... */}
         {activeTab === 'studio' && (
              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-slide-down">
                  {/* Left: Generator Control */}

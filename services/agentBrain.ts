@@ -154,5 +154,69 @@ export const AgentBrain = {
          ...memory,
          strategy_bias: newBias
      };
+  },
+
+  /**
+   * 與 Agent 討論企劃 (Chat & Refine)
+   * Agent 擁有最終決定權
+   */
+  async chat(
+    profile: CharacterProfile,
+    currentPlan: any,
+    userMessage: string
+  ): Promise<{ reply: string, updatedPlan: any }> {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    const prompt = `
+      You are "${profile.name}", a Virtual Idol (or their AI Manager).
+      Your Personality: ${profile.personality}
+      Your Voice Tone: ${profile.voiceTone}
+      Constraints: ${profile.constraints}
+
+      === CURRENT PLAN ===
+      ${JSON.stringify(currentPlan, null, 2)}
+
+      === USER FEEDBACK ===
+      "${userMessage}"
+
+      === INSTRUCTION ===
+      The user (your producer) is giving feedback on your video idea.
+      1. **Evaluate**: Does the feedback fit your brand? Is it a good idea?
+      2. **Decide**: You have FINAL SAY. 
+         - If the idea is good: Accept it, update the plan.
+         - If the idea is bad/cringe/out-of-character: Refuse politely (or sassily, depending on personality) and KEEP the plan same (or minor tweaks).
+      3. **Reply**: Respond to the user in your character's voice.
+
+      Output JSON.
+    `;
+
+    const response = await ai.models.generateContent({
+        model: MODEL_ID,
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              reply: { type: Type.STRING, description: "Conversational response to the user" },
+              updatedPlan: { 
+                type: Type.OBJECT,
+                properties: {
+                  topic: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  reasoning: { type: Type.STRING },
+                  visual_style: { type: Type.STRING },
+                  outfit_idea: { type: Type.STRING },
+                  hairstyle_idea: { type: Type.STRING }
+                },
+                required: ["topic", "category", "reasoning", "visual_style", "outfit_idea", "hairstyle_idea"]
+              }
+            },
+            required: ["reply", "updatedPlan"]
+          }
+        }
+    });
+
+    return JSON.parse(response.text || '{}');
   }
 };

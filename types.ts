@@ -52,6 +52,7 @@ export interface CharacterProfile {
     front?: string;     // Face Detail
     fullBody?: string;  // Outfit Detail
     side?: string;      // Structure Detail
+    back?: string;      // Back Detail (新增)
   };
 }
 
