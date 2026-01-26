@@ -25,17 +25,45 @@ export interface ChannelConfig {
   };
   lastRun?: string;
   lastTriggeredSlot?: string;
+
+  // V9: Agent Memory System
+  agentMemory?: AgentMemory;
 }
 
 export interface CharacterProfile {
   id: string;
   name: string;
-  description: string;
+  description: string; // 包含外觀、性格、口頭禪
   // 多角度參考圖
   images: {
     front?: string;     // 正面 (Face ID)
     fullBody?: string;  // 全身 (Outfit/Proportions)
     side?: string;      // 側面/三視圖 (Structure)
+  };
+}
+
+// V9: AI 的長期記憶庫
+export interface AgentMemory {
+  history: VideoLog[];
+  strategy_bias: {
+    // AI 對不同類型的偏好權重 (根據成效自動調整)
+    dance: number;
+    vlog: number;
+    skit: number;
+    challenge: number;
+  };
+}
+
+// V9: 單次影片的決策記錄
+export interface VideoLog {
+  videoId: string;
+  timestamp: string;
+  topic: string;
+  category: string;
+  reasoning: string; // AI 為什麼決定拍這個？
+  performance_mock?: { // 模擬成效 (未來接真實 API)
+    views: number;
+    retention: number; 
   };
 }
 
