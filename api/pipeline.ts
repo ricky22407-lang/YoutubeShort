@@ -33,8 +33,6 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 async function getTrends(niche: string, region: string, apiKey: string) {
-  // ... (Trend fetching logic remains similar but simplified for brevity)
-  // Assume same implementation as before
   return { nicheTrends: [], globalTrends: [] }; 
 }
 
@@ -54,15 +52,10 @@ export default async function handler(req: any, res: any) {
 
     switch (stage) {
       case 'analyze': {
-        // V9 UPDATE: Agent Decision Logic
         let promptContext = "";
         let visualStyleOverride = "";
         
-        // 如果是角色模式，AI 需要扮演該角色進行思考
         if (channel.mode === 'character' && channel.characterProfile) {
-           // 注意：真實場景下這裡會呼叫 AgentBrain.think()，但因為 API Route 無法直接 import client-side logic
-           // 我們將 Agent 的思考邏輯整合進 System Prompt
-           
            promptContext = `
              === AGENT MODE ACTIVE ===
              You are acting as the AI Virtual Idol "${channel.characterProfile.name}".
@@ -70,6 +63,13 @@ export default async function handler(req: any, res: any) {
              
              Instead of generic content, generate content that fits your specific persona.
              Think: "What would ${channel.characterProfile.name} post today to get attention?"
+             
+             **CRITICAL: ADAPTIVE OUTFIT**
+             You MUST change the outfit description based on the video context.
+             - If working out -> Gym clothes.
+             - If at home -> Pajamas.
+             - If going out -> Streetwear.
+             Do NOT say "generic clothes". Be specific (e.g., "Pink oversized hoodie and yoga pants").
            `;
            
            visualStyleOverride = "Visual Style: Shot on iPhone 15 Pro, vertical vlog format, slight camera shake, raw unedited feel. The character should look at the camera like they are Facetiming a friend.";
@@ -96,7 +96,7 @@ export default async function handler(req: any, res: any) {
           
           ${visualStyleOverride}
 
-          Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
+          Return JSON: { "prompt": "The detailed Veo prompt (MUST include specific outfit and hairstyle description fitting the scene)", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -122,11 +122,7 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'render_and_upload': {
-        // ... (Upload logic remains the same, assuming V8 implementation)
-        // Re-implementing simplified version for context
-        
         let currentAccessToken = channel.auth?.access_token;
-        // Refresh token logic...
         if (channel.auth?.refresh_token) {
              try {
                 const refreshed = await refreshAccessToken(channel.auth.refresh_token);
@@ -134,14 +130,12 @@ export default async function handler(req: any, res: any) {
              } catch(e) { console.warn("Refresh failed", e); }
         }
 
-        // 1. Generate Video
         let operation = await ai.models.generateVideos({
           model: 'veo-3.1-fast-generate-preview',
           prompt: metadata.prompt,
           config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
         });
 
-        // Polling loop...
         let attempts = 0;
         while (!operation.done && attempts < 60) {
           await new Promise(r => setTimeout(r, 5000));
@@ -154,7 +148,6 @@ export default async function handler(req: any, res: any) {
         const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
         const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
 
-        // 2. Upload to YouTube
         const boundary = '-------PIPELINE_UPLOAD';
         const jsonMeta = JSON.stringify({
              snippet: { title: metadata.title, description: metadata.desc, categoryId: "24" },

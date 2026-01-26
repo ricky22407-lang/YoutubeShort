@@ -33,12 +33,25 @@ export interface ChannelConfig {
 export interface CharacterProfile {
   id: string;
   name: string;
-  description: string; // 包含外觀、性格、口頭禪
-  // 多角度參考圖
+  // 基本資料
+  age?: string;          // e.g. "19 years old"
+  occupation?: string;   // e.g. "College Student / Barista"
+  gender?: string;       // e.g. "Female"
+  
+  // 行為模式
+  personality: string;   // 詳細性格 e.g. "Energetic, clumsy, loves cats"
+  voiceTone: string;     // 語氣 e.g. "Sarcastic, rapid-fire, Gen-Z slang"
+  contentFocus: string;  // 專攻領域 e.g. "Tech reviews, Gaming, Vlogs"
+  constraints: string;   // 禁忌/限制 e.g. "No alcohol, no swearing, keep face visible"
+
+  description: string;   // 舊欄位保留作為 "視覺總結 (Visual Summary)"
+
+  // 視覺資產
   images: {
-    front?: string;     // 正面 (Face ID)
-    fullBody?: string;  // 全身 (Outfit/Proportions)
-    side?: string;      // 側面/三視圖 (Structure)
+    threeView?: string; // ★★★ 關鍵：三視圖 (Front/Side/Back)
+    front?: string;     // Face Detail
+    fullBody?: string;  // Outfit Detail
+    side?: string;      // Structure Detail
   };
 }
 
