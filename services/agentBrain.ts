@@ -50,6 +50,8 @@ export const AgentBrain = {
       
       === 👤 ARTIST PROFILE ===
       Name: ${profile.name}
+      Age: ${profile.age || "Young Adult"}
+      Gender: ${profile.gender || "Female"}
       Niche: ${profile.contentFocus}
       Personality: ${profile.personality}
       Constraints: ${profile.constraints}
@@ -64,13 +66,18 @@ export const AgentBrain = {
       === 📈 MARKET TRENDS ===
       ${trendKeywords}
       
+      === CRITICAL VISUAL INSTRUCTION ===
+      1. **OOTD Consistency**: When suggesting outfits, you MUST explicitly state the fit is for an ADULT/YOUNG ADULT (unless character is a child).
+      2. **Avoid Ambiguity**: DO NOT just say "Cute Dress". Say "High-fashion pastel dress, mature fit" or "K-pop Idol stage outfit". 
+      3. **Proportions**: Ensure the description implies an adult body structure, not a chibi or child-like one.
+      
       === TASK ===
       Generate the NEXT viral video concept.
       
       LOGIC:
       1. Analyze trends.
       2. **CROSS-REFERENCE WITH PERFORMANCE**: If previous videos of a certain category failed (low views), avoid that category unless you have a twist. If they succeeded, double down.
-      3. **OOTD**: Match outfit to context.
+      3. **OOTD**: Match outfit to context but keep it age-appropriate for the model.
       
       Output JSON.
     `;
@@ -87,7 +94,7 @@ export const AgentBrain = {
             category: { type: Type.STRING, enum: ["dance", "vlog", "skit", "challenge"] },
             reasoning: { type: Type.STRING, description: "Explain decision based on past performance data" },
             visual_style: { type: Type.STRING },
-            outfit_idea: { type: Type.STRING },
+            outfit_idea: { type: Type.STRING, description: "Detailed outfit description ensuring age-appropriate fit" },
             hairstyle_idea: { type: Type.STRING }
           },
           required: ["topic", "category", "reasoning", "visual_style", "outfit_idea", "hairstyle_idea"]
@@ -172,7 +179,9 @@ export const AgentBrain = {
       Your Personality: ${profile.personality}
       Your Voice Tone: ${profile.voiceTone}
       Constraints: ${profile.constraints}
-
+      
+      PHYSICAL IDENTITY: ${profile.age || "Young Adult"} ${profile.gender || "Female"}.
+      
       === CURRENT PLAN ===
       ${JSON.stringify(currentPlan, null, 2)}
 
@@ -180,13 +189,13 @@ export const AgentBrain = {
       "${userMessage}"
 
       === INSTRUCTION ===
-      The user (your producer) is giving feedback on your video idea.
-      1. **Evaluate**: Does the feedback fit your brand? Is it a good idea?
-      2. **Decide**: You have FINAL SAY. 
-         - If the idea is good: Accept it, update the plan.
-         - If the idea is bad/cringe/out-of-character: Refuse politely (or sassily, depending on personality) and KEEP the plan same (or minor tweaks).
-      3. **Reply**: Respond to the user in your character's voice.
-
+      The user (your producer) is giving feedback.
+      1. **Evaluate**: Does the feedback fit your brand?
+      2. **Age Consistency**: If the user asks for something "cute", interpret it as "Mature Cute" or "Idol Cute". NEVER regress to a child-like state.
+      3. **Decide**: You have FINAL SAY. 
+         - If good: Accept it, update the plan.
+         - If bad/cringe/out-of-character: Refuse politely and KEEP the plan same.
+      
       Output JSON.
     `;
 

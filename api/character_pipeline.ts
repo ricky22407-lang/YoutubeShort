@@ -19,7 +19,7 @@ export default async function handler(req: any, res: any) {
   const ai = new GoogleGenAI({ apiKey: API_KEY });
 
   try {
-    // 1. 準備 Reference Images (僅在非續寫模式下使用)
+    // 1. 準備 Reference Images
     const referenceImages = [];
 
     const processImage = (base64Str: string) => {
@@ -35,25 +35,19 @@ export default async function handler(req: any, res: any) {
     };
 
     if (!startImage) {
-        // 優先順序：三視圖 > 正面 > 全身 > 側面 > 背面
         if (images.threeView) referenceImages.push(processImage(images.threeView));
         if (images.front) referenceImages.push(processImage(images.front));
         if (images.fullBody) referenceImages.push(processImage(images.fullBody));
-        
-        // 新增支援側面與背面，補足 3 張的額度
         if (referenceImages.length < 3 && images.side) referenceImages.push(processImage(images.side));
         if (referenceImages.length < 3 && images.back) referenceImages.push(processImage(images.back));
         
-        // 確保沒有 Null
         const validRefs = referenceImages.filter(Boolean).slice(0, 3);
-        
-        // 如果沒有起始圖，也沒有參考圖，就報錯
         if (validRefs.length === 0) {
              return res.status(400).json({ error: 'Missing Reference Images (Please upload a 3-View Chart or Front photo)' });
         }
     }
 
-    // 2. 構建 Prompt (強化服裝權重)
+    // 2. 構建 Prompt (加入物理錨點 Physical Anchor)
     let compositionPrompt = "";
     switch (cameraAngle) {
         case 'close_up': compositionPrompt = "Extreme Close-up shot, focusing on face expression."; break;
@@ -62,10 +56,17 @@ export default async function handler(req: any, res: any) {
     }
 
     const baseIdentity = character.description || "A virtual character";
+    const age = character.age || "20";
+    const gender = character.gender || "Female";
     
+    // ★★★ 關鍵修正：定義物理錨點，防止變回小孩 ★★★
+    // 明確指出這個人是成人，身體比例必須維持
+    const physicalAnchor = `PHYSICAL ANCHOR: Subject is a ${age}-year-old ${gender}. Maintain mature body proportions and height. DO NOT generate a child or chibi character.`;
+
     let attirePrompt = "";
     if (customOutfit) {
-        attirePrompt = `CRITICAL OUTFIT OVERRIDE: The character is wearing ${customOutfit}. Ignore the outfit in reference images.`;
+        // 在服裝描述後加上 "fitted for an adult"，雙重保險
+        attirePrompt = `CRITICAL OUTFIT OVERRIDE: The character is wearing ${customOutfit}, tailored fit for an adult. Ignore the outfit in reference images.`;
     }
     
     let hairPrompt = "";
@@ -77,6 +78,7 @@ export default async function handler(req: any, res: any) {
       (Vertical 9:16) Cinematic video.
       
       SUBJECT IDENTITY: ${baseIdentity}.
+      ${physicalAnchor}
       ${attirePrompt}
       ${hairPrompt}
       
@@ -131,7 +133,7 @@ export default async function handler(req: any, res: any) {
       attempts++;
     }
 
-    // 4. 錯誤檢查 (Critical Fix)
+    // 4. 錯誤檢查
     if (!operation.done) throw new Error("Veo Generation Timed Out");
     
     if (operation.error) {
