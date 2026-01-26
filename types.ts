@@ -72,11 +72,12 @@ export interface VideoLog {
   videoId: string;
   timestamp: string;
   topic: string;
-  category: string;
-  reasoning: string; // AI 為什麼決定拍這個？
-  performance_mock?: { // 模擬成效 (未來接真實 API)
+  category: 'dance' | 'vlog' | 'skit' | 'challenge'; // 強制型別以利統計
+  reasoning: string; 
+  stats?: { // 真實或模擬的成效數據
     views: number;
-    retention: number; 
+    likes: number;
+    retention: number; // 0.0 - 1.0
   };
 }
 

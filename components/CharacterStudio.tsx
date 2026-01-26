@@ -23,6 +23,36 @@ const DEFAULT_PROFILE: CharacterProfile = {
   images: {}
 };
 
+// 輔助：從影片 Blob/DataURL 中擷取最後一幀圖片作為續寫參考
+const captureLastFrame = async (videoUrl: string): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.src = videoUrl;
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    
+    video.onloadedmetadata = () => {
+      video.currentTime = Math.max(0, video.duration - 0.1); // Seek to end
+    };
+
+    video.onseeked = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/png');
+        resolve(dataUrl);
+      } else {
+        reject(new Error("Canvas context failed"));
+      }
+    };
+
+    video.onerror = (e) => reject(e);
+  });
+};
+
 export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channels, setChannels }) => {
   const [character, setCharacter] = useState<CharacterProfile>(DEFAULT_PROFILE);
   const [activeTab, setActiveTab] = useState<'profile' | 'brain' | 'studio'>('profile');
@@ -31,17 +61,33 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
   
   // Agent Thinking State
   const [isThinking, setIsThinking] = useState(false);
-  // 更新 State 結構以包含服裝資訊
+  const [isReflecting, setIsReflecting] = useState(false); // New state for reflection
+
   const [agentIdea, setAgentIdea] = useState<{
       topic: string; 
       reasoning: string; 
       outfit_idea: string; 
       hairstyle_idea: string;
+      visual_style: string;
   } | null>(null);
+
+  // Studio / Editor State
+  const [studioParams, setStudioParams] = useState({
+      prompt: '',
+      outfit: '',
+      hair: '',
+      cameraAngle: 'waist_up',
+      startImage: '' as string | null // For continuation
+  });
+  const [clips, setClips] = useState<{id: string, url: string, prompt: string}[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isStitching, setIsStitching] = useState(false);
+  const [stitchedVideo, setStitchedVideo] = useState<string | null>(null);
 
   // Refs for uploads
   const threeViewRef = useRef<HTMLInputElement>(null);
   const frontRef = useRef<HTMLInputElement>(null);
+  const fullBodyRef = useRef<HTMLInputElement>(null);
 
   // Load Channel Data
   useEffect(() => {
@@ -54,7 +100,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     const ch = channels.find(c => c.id === selectedChannelId);
     if (ch) {
       if (ch.characterProfile) setCharacter(ch.characterProfile);
-      else setCharacter({ ...DEFAULT_PROFILE, name: ch.name }); // Default fallback
+      else setCharacter({ ...DEFAULT_PROFILE, name: ch.name });
       
       if (ch.agentMemory) setMemory(ch.agentMemory);
       else setMemory(AgentBrain.initMemory());
@@ -80,7 +126,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     setAgentIdea(null);
     try {
         const mockTrends = [{ id: '1', title: 'Viral Dance Challenge', hashtags: [], view_count: 1000000, view_growth_rate: 5 }];
-        // @ts-ignore - Ignore transient type mismatch during dev
+        // @ts-ignore
         const decision = await AgentBrain.think(character, memory, mockTrends);
         setAgentIdea(decision);
     } catch (e) {
@@ -89,6 +135,129 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
     } finally {
         setIsThinking(false);
     }
+  };
+
+  const handleReflect = async () => {
+      setIsReflecting(true);
+      try {
+          // 模擬 API 延遲
+          await new Promise(r => setTimeout(r, 1000));
+          const newMemory = await AgentBrain.reflect(memory);
+          setMemory(newMemory);
+          // Update global state immediately
+          setChannels(prev => prev.map(c => c.id === selectedChannelId ? { ...c, agentMemory: newMemory } : c));
+      } catch (e) {
+          alert("Reflection Failed");
+      } finally {
+          setIsReflecting(false);
+      }
+  };
+
+  const transferIdeaToStudio = () => {
+      if (!agentIdea) return;
+      setStudioParams({
+          prompt: `${agentIdea.topic}. ${agentIdea.visual_style}`,
+          outfit: agentIdea.outfit_idea,
+          hair: agentIdea.hairstyle_idea,
+          cameraAngle: 'waist_up',
+          startImage: null
+      });
+      setActiveTab('studio');
+  };
+
+  const handleGenerateClip = async () => {
+      setIsGenerating(true);
+      try {
+          const res = await fetch('/api/character_pipeline', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  character,
+                  vibe: { prompt: studioParams.prompt },
+                  customOutfit: studioParams.outfit,
+                  customHair: studioParams.hair,
+                  cameraAngle: studioParams.cameraAngle,
+                  startImage: studioParams.startImage
+              })
+          });
+          const data = await res.json();
+          if (data.success && data.videoUrl) {
+              setClips(prev => [...prev, { id: Date.now().toString(), url: data.videoUrl, prompt: studioParams.prompt }]);
+              // Clear start image after generation to avoid accidental loops
+              setStudioParams(prev => ({ ...prev, startImage: null }));
+          } else {
+              alert("Generation Failed: " + data.error);
+          }
+      } catch (e: any) {
+          alert("Error: " + e.message);
+      } finally {
+          setIsGenerating(false);
+      }
+  };
+
+  const handleContinueClip = async (videoUrl: string) => {
+      try {
+          const lastFrame = await captureLastFrame(videoUrl);
+          setStudioParams(prev => ({ ...prev, startImage: lastFrame }));
+          // Scroll top to show input
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (e) {
+          alert("Failed to capture frame for continuation.");
+      }
+  };
+
+  const handleStitchVideos = async () => {
+      if (clips.length < 2) return alert("Need at least 2 clips to stitch.");
+      setIsStitching(true);
+      try {
+          const res = await fetch('/api/stitch_videos', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ segments: clips.map(c => c.url) })
+          });
+          const data = await res.json();
+          if (data.success) {
+              setStitchedVideo(data.mergedVideoUrl);
+          } else {
+              alert("Stitch Failed: " + data.error);
+          }
+      } catch (e) {
+          console.error(e);
+          alert("Stitch Error");
+      } finally {
+          setIsStitching(false);
+      }
+  };
+
+  const handleUploadFinal = async () => {
+      if (!stitchedVideo && clips.length === 0) return;
+      const targetVideo = stitchedVideo || clips[0].url;
+      const channel = channels.find(c => c.id === selectedChannelId);
+      
+      if (!channel?.auth) return alert("Please connect YouTube channel first.");
+
+      try {
+          const res = await fetch('/api/upload_video', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  videoUrl: targetVideo,
+                  auth: channel.auth,
+                  metadata: {
+                      title: studioParams.prompt.slice(0, 50) + " #shorts",
+                      desc: `Generated by ${character.name}`
+                  }
+              })
+          });
+          const data = await res.json();
+          if (data.success) {
+              alert(`Uploaded! Video ID: ${data.videoId}`);
+          } else {
+              alert("Upload Failed: " + data.error);
+          }
+      } catch (e) {
+          alert("Upload Error");
+      }
   };
 
   const saveConfig = () => {
@@ -109,13 +278,12 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
           <button onClick={onBack} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center hover:bg-zinc-800 transition-colors">←</button>
           <div>
             <h1 className="text-3xl font-black italic tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
-              AI 經紀人系統 V9.0
+              AI 經紀人系統 V9.5
             </h1>
             <p className="text-xs text-purple-400/60 font-mono tracking-widest uppercase">Autonomous Idol Management</p>
           </div>
         </div>
         
-        {/* Channel Selector in Header */}
         <select 
             value={selectedChannelId} 
             onChange={e => setSelectedChannelId(e.target.value)} 
@@ -129,9 +297,9 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
       <div className="flex justify-center mb-8">
          <div className="flex bg-zinc-900/50 p-1 rounded-full border border-zinc-800 backdrop-blur-md">
              {[
-               { id: 'profile', icon: '👤', label: '藝人檔案 (Profile)' },
-               { id: 'brain', icon: '🧠', label: '大腦與決策 (Brain)' },
-               { id: 'studio', icon: '🎬', label: '手動片場 (Studio)' }
+               { id: 'profile', icon: '👤', label: '藝人檔案' },
+               { id: 'brain', icon: '🧠', label: '大腦與靈感' },
+               { id: 'studio', icon: '🎬', label: '片場與剪輯' }
              ].map(tab => (
                  <button 
                    key={tab.id}
@@ -145,7 +313,7 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
          </div>
       </div>
 
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         
         {/* === TAB 1: PROFILE MANAGEMENT === */}
         {activeTab === 'profile' && (
@@ -166,24 +334,30 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                                 <div className="absolute inset-0 flex flex-col items-center justify-center text-zinc-600 gap-2">
                                     <span className="text-4xl">📐</span>
                                     <span className="text-[10px] font-black uppercase tracking-widest">上傳三視圖 (推薦)</span>
-                                    <span className="text-[9px] text-zinc-700">Front / Side / Back Reference</span>
                                 </div>
                             )}
                             <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center text-xs font-bold transition-opacity">更換圖片</div>
                             <input ref={threeViewRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'threeView')} />
                         </div>
 
-                        {/* Secondary Images */}
+                        {/* Secondary Images Grid */}
                         <div className="grid grid-cols-2 gap-3">
+                            {/* Front Face */}
                             <div 
                                 onClick={() => frontRef.current?.click()}
-                                className="aspect-square bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600"
+                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600"
                             >
                                 {character.images.front ? <img src={character.images.front} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">正面特寫</div>}
                                 <input ref={frontRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'front')} />
                             </div>
-                            <div className="aspect-square bg-zinc-900/50 rounded-xl border border-zinc-800 flex items-center justify-center text-[9px] text-zinc-700 p-2 text-center">
-                                更多角度可增加準確度
+
+                            {/* Full Body */}
+                            <div 
+                                onClick={() => fullBodyRef.current?.click()}
+                                className="aspect-[3/4] bg-zinc-900 rounded-xl border border-zinc-800 relative overflow-hidden cursor-pointer hover:border-zinc-600"
+                            >
+                                {character.images.fullBody ? <img src={character.images.fullBody} className="w-full h-full object-cover" /> : <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 font-bold">全身穿搭</div>}
+                                <input ref={fullBodyRef} type="file" className="hidden" onChange={e => handleImageUpload(e, 'fullBody')} />
                             </div>
                         </div>
                     </div>
@@ -198,62 +372,25 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                     <div className="bg-zinc-950 border border-zinc-800 p-8 rounded-[2rem] space-y-6">
                         <div className="flex justify-between items-center border-b border-zinc-800 pb-4">
                             <h2 className="text-xs font-black text-purple-500 uppercase tracking-widest">基本資料 (Bio)</h2>
-                            <div className="flex gap-2">
-                                <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                                <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
-                                <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                            </div>
                         </div>
-                        
                         <div className="grid grid-cols-2 gap-6">
                             <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-zinc-500 uppercase">藝名 (Name)</label>
+                                <label className="text-[10px] font-bold text-zinc-500 uppercase">藝名</label>
                                 <input value={character.name} onChange={e => setCharacter({...character, name: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm font-bold text-white focus:border-purple-500 outline-none" />
                             </div>
                             <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-zinc-500 uppercase">職業 (Occupation)</label>
-                                <input value={character.occupation || ''} onChange={e => setCharacter({...character, occupation: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm text-zinc-300 focus:border-purple-500 outline-none" placeholder="e.g. VTuber" />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-zinc-500 uppercase">年齡 (Age)</label>
-                                <input value={character.age || ''} onChange={e => setCharacter({...character, age: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm text-zinc-300 focus:border-purple-500 outline-none" />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[10px] font-bold text-zinc-500 uppercase">性別 (Gender)</label>
-                                <input value={character.gender || ''} onChange={e => setCharacter({...character, gender: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm text-zinc-300 focus:border-purple-500 outline-none" />
+                                <label className="text-[10px] font-bold text-zinc-500 uppercase">職業</label>
+                                <input value={character.occupation || ''} onChange={e => setCharacter({...character, occupation: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-sm text-zinc-300 focus:border-purple-500 outline-none" />
                             </div>
                         </div>
-
                         <div className="space-y-2">
-                             <label className="text-[10px] font-bold text-zinc-500 uppercase">性格與行為 (Personality & Behavior)</label>
-                             <textarea 
-                                value={character.personality} 
-                                onChange={e => setCharacter({...character, personality: e.target.value})}
-                                className="w-full h-24 bg-black border border-zinc-800 p-4 rounded-xl text-xs leading-relaxed text-zinc-300 focus:border-purple-500 outline-none resize-none"
-                                placeholder="描述角色的個性，例如：活潑好動、容易害羞、喜歡吐槽..."
-                             />
+                             <label className="text-[10px] font-bold text-zinc-500 uppercase">性格與行為</label>
+                             <textarea value={character.personality} onChange={e => setCharacter({...character, personality: e.target.value})} className="w-full h-24 bg-black border border-zinc-800 p-4 rounded-xl text-xs leading-relaxed text-zinc-300 focus:border-purple-500 outline-none resize-none" />
                         </div>
-
-                        <div className="grid grid-cols-2 gap-6">
-                             <div className="space-y-2">
-                                 <label className="text-[10px] font-bold text-zinc-500 uppercase">語氣/口頭禪 (Voice Tone)</label>
-                                 <input value={character.voiceTone} onChange={e => setCharacter({...character, voiceTone: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-zinc-300 focus:border-purple-500 outline-none" placeholder="e.g. Sarcastic, Gen-Z slang" />
-                             </div>
-                             <div className="space-y-2">
-                                 <label className="text-[10px] font-bold text-zinc-500 uppercase">內容領域 (Content Niche)</label>
-                                 <input value={character.contentFocus} onChange={e => setCharacter({...character, contentFocus: e.target.value})} className="w-full bg-black border border-zinc-800 p-3 rounded-xl text-xs text-zinc-300 focus:border-purple-500 outline-none" placeholder="e.g. Tech, Lifestyle" />
-                             </div>
-                        </div>
-
                         <div className="space-y-2">
-                             <label className="text-[10px] font-bold text-red-500 uppercase">禁忌事項 / 限制 (Constraints)</label>
+                             <label className="text-[10px] font-bold text-red-500 uppercase">禁忌事項 (Constraints)</label>
                              <div className="bg-red-950/20 border border-red-900/30 p-4 rounded-xl">
-                                <textarea 
-                                    value={character.constraints} 
-                                    onChange={e => setCharacter({...character, constraints: e.target.value})}
-                                    className="w-full h-16 bg-transparent border-none p-0 text-xs text-red-200 placeholder-red-900/50 outline-none resize-none"
-                                    placeholder="AI 絕對不能做的事情，例如：不能吸菸、不能談論政治..."
-                                />
+                                <textarea value={character.constraints} onChange={e => setCharacter({...character, constraints: e.target.value})} className="w-full h-16 bg-transparent border-none p-0 text-xs text-red-200 outline-none resize-none" />
                              </div>
                         </div>
                     </div>
@@ -269,14 +406,8 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                     
                     <div className="max-w-2xl mx-auto text-center space-y-8 relative z-10">
                         <h2 className="text-3xl font-black italic">Agent Neural Core</h2>
-                        <p className="text-zinc-500 text-sm">AI 將根據剛剛設定的「藝人檔案」與「市場趨勢」進行思考。</p>
-                        
                         <div className="flex justify-center">
-                            <button 
-                                onClick={handleAgentThink}
-                                disabled={isThinking}
-                                className={`px-12 py-6 rounded-full font-black text-sm uppercase tracking-[0.2em] shadow-2xl transition-all border ${isThinking ? 'bg-zinc-900 border-zinc-800 text-zinc-600 animate-pulse' : 'bg-white text-black border-white hover:scale-105 hover:shadow-cyan-500/50'}`}
-                            >
+                            <button onClick={handleAgentThink} disabled={isThinking} className={`px-12 py-6 rounded-full font-black text-sm uppercase tracking-[0.2em] shadow-2xl transition-all border ${isThinking ? 'bg-zinc-900 border-zinc-800 text-zinc-600 animate-pulse' : 'bg-white text-black border-white hover:scale-105'}`}>
                                 {isThinking ? 'Thinking...' : '觸發靈感 (Trigger Ideation)'}
                             </button>
                         </div>
@@ -287,24 +418,25 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                                     <div className="w-16 h-16 rounded-full bg-purple-600 flex items-center justify-center font-bold text-white shadow-lg shadow-purple-500/30 text-2xl shrink-0">AI</div>
                                     <div className="space-y-4 flex-1">
                                         <div>
-                                           <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Concept</div>
+                                           <div className="text-[10px] font-bold text-purple-400 uppercase tracking-wider">Generated Concept</div>
                                            <h3 className="text-2xl font-black text-white leading-tight">"{agentIdea.topic}"</h3>
                                         </div>
-                                        
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                                                <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">OOTD (Outfit Idea)</div>
+                                                <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">OOTD</div>
                                                 <div className="text-sm font-bold text-pink-300">👚 {agentIdea.outfit_idea}</div>
                                             </div>
                                             <div className="bg-white/5 p-3 rounded-xl border border-white/10">
-                                                <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">Hair Style</div>
+                                                <div className="text-[9px] font-bold text-zinc-500 uppercase mb-1">Hair</div>
                                                 <div className="text-sm font-bold text-blue-300">💇‍♀️ {agentIdea.hairstyle_idea}</div>
                                             </div>
                                         </div>
-
-                                        <p className="text-sm text-zinc-300 leading-relaxed border-l-2 border-purple-500/30 pl-4 py-1">
-                                            {agentIdea.reasoning}
-                                        </p>
+                                        <p className="text-sm text-zinc-300 border-l-2 border-purple-500/30 pl-4 py-1">{agentIdea.reasoning}</p>
+                                        
+                                        {/* Action Button: Go to Studio */}
+                                        <button onClick={transferIdeaToStudio} className="w-full mt-4 py-3 bg-white text-black font-black uppercase rounded-xl hover:bg-cyan-500 hover:text-white transition-colors">
+                                            👉 前往片場製作 (Produce This)
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -312,31 +444,56 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
                     </div>
                  </div>
 
+                 {/* 策略權重與歷史復盤 */}
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Strategy Bias */}
+                    {/* Strategy Bias Panel */}
                     <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem]">
-                        <h3 className="text-xs font-black text-zinc-500 uppercase mb-4">策略權重 (Strategy Bias)</h3>
+                        <div className="flex justify-between items-center mb-4">
+                             <h3 className="text-xs font-black text-zinc-500 uppercase">策略權重 (Strategy Bias)</h3>
+                             <button 
+                                onClick={handleReflect}
+                                disabled={isReflecting}
+                                className="px-3 py-1 bg-zinc-800 text-cyan-400 text-[10px] font-bold rounded-full hover:bg-zinc-700 transition-colors flex items-center gap-2"
+                             >
+                                 {isReflecting ? <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></div> : "📊 進行成效復盤 (Reflect)"}
+                             </button>
+                        </div>
+                        
                         <div className="space-y-4">
                              {Object.entries(memory.strategy_bias).map(([k, v]) => (
-                                <div key={k} className="flex items-center gap-4">
-                                   <span className="text-[10px] uppercase w-20 text-zinc-400 font-bold">{k}</span>
+                                <div key={k} className="flex items-center gap-4 group">
+                                   <span className="text-[10px] uppercase w-20 text-zinc-400 font-bold group-hover:text-white transition-colors">{k}</span>
                                    <div className="flex-1 h-3 bg-zinc-900 rounded-full overflow-hidden">
-                                      <div className="h-full bg-gradient-to-r from-cyan-500 to-blue-500" style={{ width: `${(v as number) * 100}%` }}></div>
+                                      <div 
+                                        className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-1000 ease-out" 
+                                        style={{ width: `${(v as number) * 100}%` }}
+                                      ></div>
                                    </div>
-                                   <span className="text-[10px] font-mono text-white">{((v as number) * 100).toFixed(0)}%</span>
+                                   <span className="text-[10px] font-mono text-white w-8 text-right">{((v as number) * 100).toFixed(0)}%</span>
                                 </div>
                              ))}
                         </div>
+                        <p className="text-[9px] text-zinc-600 mt-4 italic">
+                            * 點擊「復盤」按鈕，AI 會根據歷史影片觀看數自動調整這些權重。
+                        </p>
                     </div>
                     
-                    {/* History */}
+                    {/* History Panel */}
                     <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem]">
-                        <h3 className="text-xs font-black text-zinc-500 uppercase mb-4">長期記憶 (Last 3 Episodes)</h3>
-                        <div className="space-y-3">
-                            {memory.history.slice(0, 3).map((h, i) => (
-                                <div key={i} className="flex items-center gap-3 p-3 bg-zinc-900/50 rounded-xl border border-zinc-800/50">
-                                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                                    <div className="truncate text-xs text-zinc-300 font-bold">{h.topic}</div>
+                        <h3 className="text-xs font-black text-zinc-500 uppercase mb-4">影片表現 (Performance History)</h3>
+                        <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                            {memory.history.map((h, i) => (
+                                <div key={i} className="flex items-center justify-between p-3 bg-zinc-900/50 rounded-xl border border-zinc-800/50 hover:border-zinc-700 transition-colors">
+                                    <div className="flex items-center gap-3 overflow-hidden">
+                                        <div className={`w-2 h-2 rounded-full ${h.category === 'dance' ? 'bg-pink-500' : h.category === 'vlog' ? 'bg-blue-500' : 'bg-green-500'}`}></div>
+                                        <div className="truncate text-xs text-zinc-300 font-bold">{h.topic}</div>
+                                    </div>
+                                    <div className="text-[10px] font-mono text-zinc-500 flex flex-col items-end">
+                                        <span className={h.stats && h.stats.views > 10000 ? "text-green-400 font-bold" : ""}>
+                                            {h.stats?.views.toLocaleString()} views
+                                        </span>
+                                        <span className="text-zinc-700">{h.category}</span>
+                                    </div>
                                 </div>
                             ))}
                             {memory.history.length === 0 && <div className="text-xs text-zinc-600 italic">尚無記憶數據</div>}
@@ -346,12 +503,141 @@ export const CharacterStudio: React.FC<CharacterStudioProps> = ({ onBack, channe
             </div>
         )}
 
-        {/* === TAB 3: STUDIO (Placeholder for original studio) === */}
+        {/* === TAB 3: STUDIO & EDITOR === */}
         {activeTab === 'studio' && (
-             <div className="flex flex-col items-center justify-center py-20 bg-zinc-950 border border-zinc-800 rounded-[3rem] border-dashed">
-                 <div className="text-4xl mb-4">🎬</div>
-                 <p className="text-zinc-500 text-sm font-bold uppercase">請使用左側導航欄返回舊版手動導演模式</p>
-                 <button onClick={() => setActiveTab('profile')} className="mt-4 text-purple-400 underline text-xs">回到檔案設定</button>
+             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-slide-down">
+                 {/* Left: Generator Control */}
+                 <div className="lg:col-span-4 space-y-6">
+                     <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] space-y-5">
+                         <h2 className="text-xs font-black text-cyan-500 uppercase tracking-widest mb-2">生成控制台 (Generator)</h2>
+                         
+                         {/* Continuation Preview */}
+                         {studioParams.startImage && (
+                             <div className="relative group">
+                                 <div className="text-[10px] font-bold text-green-500 uppercase mb-2 flex items-center gap-2">
+                                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                     續寫模式開啟 (Continuation)
+                                 </div>
+                                 <img src={studioParams.startImage} className="w-full h-32 object-cover rounded-xl border border-green-500/30 opacity-80" />
+                                 <button onClick={() => setStudioParams(p => ({...p, startImage: null}))} className="absolute top-2 right-2 bg-black/50 hover:bg-red-500 text-white w-6 h-6 rounded-full text-xs flex items-center justify-center transition-colors">✕</button>
+                             </div>
+                         )}
+
+                         <div>
+                             <label className="text-[10px] font-bold text-zinc-500 uppercase">Prompt (動作/情境)</label>
+                             <textarea 
+                                 value={studioParams.prompt}
+                                 onChange={e => setStudioParams({...studioParams, prompt: e.target.value})}
+                                 className="w-full h-24 bg-black border border-zinc-800 p-3 rounded-xl text-xs text-zinc-300 outline-none focus:border-cyan-500 mt-2"
+                                 placeholder="描述這一段影片要發生什麼..."
+                             />
+                         </div>
+
+                         <div className="grid grid-cols-2 gap-4">
+                             <div>
+                                 <label className="text-[10px] font-bold text-zinc-500 uppercase">服裝 (Outfit)</label>
+                                 <input 
+                                     value={studioParams.outfit}
+                                     onChange={e => setStudioParams({...studioParams, outfit: e.target.value})}
+                                     className="w-full bg-black border border-zinc-800 p-2 rounded-xl text-xs text-white mt-1"
+                                 />
+                             </div>
+                             <div>
+                                 <label className="text-[10px] font-bold text-zinc-500 uppercase">鏡位 (Angle)</label>
+                                 <select 
+                                     value={studioParams.cameraAngle}
+                                     onChange={e => setStudioParams({...studioParams, cameraAngle: e.target.value})}
+                                     className="w-full bg-black border border-zinc-800 p-2 rounded-xl text-xs text-white mt-1"
+                                 >
+                                     <option value="close_up">特寫 (Close Up)</option>
+                                     <option value="waist_up">半身 (Waist Up)</option>
+                                     <option value="full_body">全身 (Full Body)</option>
+                                 </select>
+                             </div>
+                         </div>
+
+                         <button 
+                             onClick={handleGenerateClip}
+                             disabled={isGenerating}
+                             className={`w-full py-4 rounded-xl font-black uppercase text-xs tracking-widest ${isGenerating ? 'bg-zinc-800 text-zinc-500' : 'bg-white text-black hover:bg-cyan-500 hover:text-white'}`}
+                         >
+                             {isGenerating ? 'Generating...' : '生成片段 (Generate Clip)'}
+                         </button>
+                     </div>
+                 </div>
+
+                 {/* Right: Timeline & Editor */}
+                 <div className="lg:col-span-8 space-y-6">
+                     <div className="bg-zinc-950 border border-zinc-800 p-6 rounded-[2rem] min-h-[600px] flex flex-col">
+                         <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-xs font-black text-purple-500 uppercase tracking-widest">剪輯時間軸 (Timeline)</h2>
+                            <div className="text-[10px] text-zinc-500 font-bold">Total Clips: {clips.length}</div>
+                         </div>
+
+                         {/* Clips Grid */}
+                         <div className="flex-1 space-y-4 mb-6">
+                             {clips.length === 0 ? (
+                                 <div className="h-full flex items-center justify-center text-zinc-700 text-xs font-bold uppercase tracking-widest border-2 border-dashed border-zinc-900 rounded-xl">
+                                     尚無片段，請左側生成
+                                 </div>
+                             ) : (
+                                 clips.map((clip, idx) => (
+                                     <div key={clip.id} className="flex gap-4 p-4 bg-zinc-900/50 border border-zinc-800 rounded-2xl group">
+                                         <div className="w-12 h-12 flex items-center justify-center bg-zinc-800 rounded-full font-black text-zinc-500 text-sm">
+                                             {idx + 1}
+                                         </div>
+                                         <video src={clip.url} controls className="h-32 w-auto rounded-lg border border-zinc-700 bg-black" />
+                                         <div className="flex-1 flex flex-col justify-between py-1">
+                                             <p className="text-xs text-zinc-400 line-clamp-2">{clip.prompt}</p>
+                                             <div className="flex gap-2">
+                                                 <button 
+                                                     onClick={() => handleContinueClip(clip.url)}
+                                                     className="px-3 py-1.5 bg-green-900/30 text-green-400 border border-green-800 rounded-lg text-[10px] font-bold hover:bg-green-500 hover:text-white transition-colors"
+                                                 >
+                                                     以此續寫 (Extend)
+                                                 </button>
+                                                 <button 
+                                                     onClick={() => setClips(clips.filter(c => c.id !== clip.id))}
+                                                     className="px-3 py-1.5 bg-red-900/30 text-red-400 border border-red-800 rounded-lg text-[10px] font-bold hover:bg-red-500 hover:text-white transition-colors"
+                                                 >
+                                                     刪除
+                                                 </button>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 ))
+                             )}
+                         </div>
+
+                         {/* Action Footer */}
+                         <div className="border-t border-zinc-800 pt-6 flex gap-4">
+                             <button 
+                                 onClick={handleStitchVideos}
+                                 disabled={clips.length < 2 || isStitching}
+                                 className="flex-1 py-4 bg-zinc-800 text-white font-bold uppercase text-xs rounded-xl hover:bg-purple-600 disabled:opacity-50"
+                             >
+                                 {isStitching ? 'Stitching...' : '拼接所有片段 (Stitch All)'}
+                             </button>
+                             
+                             {stitchedVideo && (
+                                 <button 
+                                     onClick={handleUploadFinal}
+                                     className="flex-1 py-4 bg-white text-black font-black uppercase text-xs rounded-xl hover:bg-green-500 hover:text-white shadow-lg shadow-white/10"
+                                 >
+                                     上傳至 YouTube (Upload)
+                                 </button>
+                             )}
+                         </div>
+
+                         {/* Stitched Preview */}
+                         {stitchedVideo && (
+                             <div className="mt-6 p-4 bg-black border border-purple-500/50 rounded-xl animate-fade-in">
+                                 <div className="text-[10px] font-bold text-purple-400 uppercase mb-2">Final Output Preview</div>
+                                 <video src={stitchedVideo} controls className="w-full rounded-lg" />
+                             </div>
+                         )}
+                     </div>
+                 </div>
              </div>
         )}
 
