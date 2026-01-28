@@ -35,13 +35,11 @@ export default async function handler(req: any, res: any) {
     };
 
     if (!startImage) {
-        // ★★★ 優化：調整圖片優先權，正面照 (Front) 對於臉部準度最重要 ★★★
         // 順序：正面 (Face) > 三視圖 (Structure) > 全身 (Outfit/Body) > 其他
         if (images.front) referenceImages.push(processImage(images.front));
         if (images.threeView) referenceImages.push(processImage(images.threeView));
         if (images.fullBody) referenceImages.push(processImage(images.fullBody));
         
-        // 補足其他角度
         if (referenceImages.length < 3 && images.side) referenceImages.push(processImage(images.side));
         if (referenceImages.length < 3 && images.back) referenceImages.push(processImage(images.back));
         
@@ -66,7 +64,7 @@ export default async function handler(req: any, res: any) {
     // 物理錨點 (維持成人比例)
     const physicalAnchor = `PHYSICAL ANCHOR: Subject is a ${age}-year-old ${gender}. Maintain mature body proportions.`;
 
-    // ★★★ 關鍵更新：臉部鎖定 (Identity Preservation) ★★★
+    // 臉部鎖定
     const faceLock = `
       IDENTITY PRESERVATION (CRITICAL):
       1. The face MUST perfectly match the provided reference images. 
@@ -75,9 +73,17 @@ export default async function handler(req: any, res: any) {
       4. Skin texture should be realistic (pores, slight imperfections) to avoid "plastic AI look".
     `;
 
+    // ★★★ 關鍵更新：邏輯與物理鎖 (防止亂變東西) ★★★
+    const logicAnchor = `
+      PHYSICS & LOGIC CONSTANTS:
+      1. **Object Permanence**: Do NOT randomly spawn items (clocks, floating symbols, extra props) unless explicitly stated in the ACTION.
+      2. **Outfit Consistency**: The outfit MUST remain static throughout the shot. NO magical clothing swaps or color shifting mid-video.
+      3. **Hand Logic**: Hands must remain empty unless the action requires holding something. Do not merge hands with clothes.
+    `;
+
     let attirePrompt = "";
     if (customOutfit) {
-        attirePrompt = `CRITICAL OUTFIT OVERRIDE: The character is wearing ${customOutfit}, tailored fit for an adult. Ignore the outfit in reference images.`;
+        attirePrompt = `CRITICAL OUTFIT OVERRIDE: The character is wearing ${customOutfit}, tailored fit for an adult. Ignore the outfit in reference images. The outfit must not change.`;
     }
     
     let hairPrompt = "";
@@ -85,8 +91,8 @@ export default async function handler(req: any, res: any) {
         hairPrompt = `HAIRSTYLE: ${customHair}.`;
     }
 
-    // 負面提示：增加針對臉部崩壞的限制
-    const negativeConstraints = "NO TEXT, NO SUBTITLES, NO WATERMARKS, CLEAN FOOTAGE, NO BLURRY FACE, NO DISTORTED EYES, NO FACIAL MORPHING.";
+    // 負面提示：增加針對幻覺物件的限制
+    const negativeConstraints = "NO TEXT, NO SUBTITLES, NO WATERMARKS, CLEAN FOOTAGE, NO BLURRY FACE, NO DISTORTED EYES, NO FACIAL MORPHING, NO SUDDEN OUTFIT CHANGES, NO FLOATING OBJECTS, NO GLITCHING PROPS.";
 
     const fullPrompt = `
       (Vertical 9:16) Cinematic video. ${negativeConstraints}
@@ -100,6 +106,8 @@ export default async function handler(req: any, res: any) {
       ACTION: ${vibe.prompt}
       
       COMPOSITION: ${compositionPrompt}
+      
+      ${logicAnchor}
       
       REALISM:
       Shot on Arri Alexa. High fidelity. Sharp focus on face.

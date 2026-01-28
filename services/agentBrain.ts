@@ -22,7 +22,7 @@ export const AgentBrain = {
     profile: CharacterProfile,
     memory: AgentMemory,
     trends: ShortsData[],
-    topicHint?: string // 新增：允許外部指定主題
+    topicHint?: string 
   ): Promise<{ 
       topic: string; 
       category: string; 
@@ -44,7 +44,6 @@ export const AgentBrain = {
 
     const trendKeywords = trends.map(t => t.title).join(', ');
     
-    // 如果有使用者指定的主題
     const userInstruction = topicHint 
         ? `USER COMMAND: Focus strictly on the topic "${topicHint}". Generate a viral twist on this specific topic.` 
         : `TASK: Generate the NEXT viral video concept based on trends.`;
@@ -64,13 +63,17 @@ export const AgentBrain = {
       ${recentHistory}
       Trends: ${trendKeywords}
       
-      === 🇹🇼 LOCALIZATION RULE (CRITICAL) ===
-      1. **Output Language**: Traditional Chinese (Taiwan/zh-TW).
-      2. **Tone**: Natural Taiwanese YouTuber style (use localized terms).
+      === 🇹🇼 LOCALIZATION RULE ===
+      1. **Output Language**: Traditional Chinese (Taiwan/zh-TW) for topic/reasoning.
+      2. **Tone**: Natural Taiwanese YouTuber style.
       
-      === 🚫 VISUAL CONSTRAINT ===
-      1. **NO TEXT/SUBTITLES**: The prompt you generate MUST explicitly say "No text, clean footage".
-      2. **OOTD**: Suggest ADULT/MATURE outfits only (unless character is child).
+      === 🚫 VISUAL CONSTRAINT (CRITICAL FOR VIDEO MODEL) ===
+      1. **NO TEXT/SUBTITLES**: The prompt must explicitly say "No text, clean footage".
+      2. **LITERAL DESCRIPTIONS ONLY**: 
+         - DO NOT use metaphors like "Time flies" (this spawns clocks) or "Explosion of flavor" (spawns explosions).
+         - Describe PHYSICAL ACTIONS: "She looks at her watch", "She smiles widely while eating".
+         - DO NOT describe complex magic. Keep it grounded in reality.
+      3. **OUTFIT STABILITY**: Ensure the outfit description is complete and static.
       
       === INSTRUCTION ===
       ${userInstruction}
@@ -89,9 +92,9 @@ export const AgentBrain = {
             topic: { type: Type.STRING, description: "Video Title in Traditional Chinese" },
             category: { type: Type.STRING, enum: ["dance", "vlog", "skit", "challenge"] },
             reasoning: { type: Type.STRING, description: "Explanation in Traditional Chinese" },
-            visual_style: { type: Type.STRING, description: "Detailed visual prompt (keep in English for Veo model compatibility)" },
-            outfit_idea: { type: Type.STRING, description: "Outfit description in English (for Model)" },
-            hairstyle_idea: { type: Type.STRING, description: "Hairstyle description in English (for Model)" }
+            visual_style: { type: Type.STRING, description: "Detailed LITERAL visual prompt for Veo (English). NO metaphors. Describe only what is physically seen." },
+            outfit_idea: { type: Type.STRING, description: "Detailed outfit description in English" },
+            hairstyle_idea: { type: Type.STRING, description: "Hairstyle description in English" }
           },
           required: ["topic", "category", "reasoning", "visual_style", "outfit_idea", "hairstyle_idea"]
         }
@@ -169,7 +172,7 @@ export const AgentBrain = {
       === INSTRUCTION ===
       1. Discuss the plan with the user (your producer).
       2. If user wants changes (e.g. "make it cuter"), update the plan fields.
-      3. **Visual Integrity**: Even if user says "cute", ensure the updated visual_style/outfit description maintains ADULT proportions in the prompt.
+      3. **Visual Integrity**: Ensure descriptions are literal and physically possible.
       
       Output JSON.
     `;
