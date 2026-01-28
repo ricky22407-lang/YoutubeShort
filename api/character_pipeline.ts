@@ -35,32 +35,45 @@ export default async function handler(req: any, res: any) {
     };
 
     if (!startImage) {
-        if (images.threeView) referenceImages.push(processImage(images.threeView));
+        // ★★★ 優化：調整圖片優先權，正面照 (Front) 對於臉部準度最重要 ★★★
+        // 順序：正面 (Face) > 三視圖 (Structure) > 全身 (Outfit/Body) > 其他
         if (images.front) referenceImages.push(processImage(images.front));
+        if (images.threeView) referenceImages.push(processImage(images.threeView));
         if (images.fullBody) referenceImages.push(processImage(images.fullBody));
+        
+        // 補足其他角度
         if (referenceImages.length < 3 && images.side) referenceImages.push(processImage(images.side));
         if (referenceImages.length < 3 && images.back) referenceImages.push(processImage(images.back));
         
         const validRefs = referenceImages.filter(Boolean).slice(0, 3);
         if (validRefs.length === 0) {
-             return res.status(400).json({ error: 'Missing Reference Images (Please upload a 3-View Chart or Front photo)' });
+             return res.status(400).json({ error: 'Missing Reference Images (Please upload a Front photo or 3-View Chart)' });
         }
     }
 
     // 2. 構建 Prompt
     let compositionPrompt = "";
     switch (cameraAngle) {
-        case 'close_up': compositionPrompt = "Extreme Close-up shot, focusing on face expression."; break;
-        case 'waist_up': compositionPrompt = "Medium Shot (Waist Up), focusing on upper body action."; break;
-        case 'full_body': default: compositionPrompt = "Wide Full Body Shot, showing entire outfit and environment."; break;
+        case 'close_up': compositionPrompt = "Extreme Close-up shot, focusing on face expression details."; break;
+        case 'waist_up': compositionPrompt = "Medium Shot (Waist Up), prioritizing facial clarity and upper body action."; break;
+        case 'full_body': default: compositionPrompt = "Wide Full Body Shot, showing entire outfit, but maintaining recognizable facial features."; break;
     }
 
     const baseIdentity = character.description || "A virtual character";
     const age = character.age || "20";
     const gender = character.gender || "Female";
     
-    // 物理錨點
-    const physicalAnchor = `PHYSICAL ANCHOR: Subject is a ${age}-year-old ${gender}. Maintain mature body proportions and height. DO NOT generate a child or chibi character.`;
+    // 物理錨點 (維持成人比例)
+    const physicalAnchor = `PHYSICAL ANCHOR: Subject is a ${age}-year-old ${gender}. Maintain mature body proportions.`;
+
+    // ★★★ 關鍵更新：臉部鎖定 (Identity Preservation) ★★★
+    const faceLock = `
+      IDENTITY PRESERVATION (CRITICAL):
+      1. The face MUST perfectly match the provided reference images. 
+      2. Strictly maintain the unique eye shape, nose bridge, and jawline structure from the references.
+      3. DO NOT genericize or beautify the face. Keep distinct facial markers.
+      4. Skin texture should be realistic (pores, slight imperfections) to avoid "plastic AI look".
+    `;
 
     let attirePrompt = "";
     if (customOutfit) {
@@ -72,14 +85,15 @@ export default async function handler(req: any, res: any) {
         hairPrompt = `HAIRSTYLE: ${customHair}.`;
     }
 
-    // ★★★ 關鍵更新：加入禁止字幕的指令 ★★★
-    const negativeConstraints = "NO TEXT, NO SUBTITLES, NO WATERMARKS, CLEAN FOOTAGE.";
+    // 負面提示：增加針對臉部崩壞的限制
+    const negativeConstraints = "NO TEXT, NO SUBTITLES, NO WATERMARKS, CLEAN FOOTAGE, NO BLURRY FACE, NO DISTORTED EYES, NO FACIAL MORPHING.";
 
     const fullPrompt = `
       (Vertical 9:16) Cinematic video. ${negativeConstraints}
       
       SUBJECT IDENTITY: ${baseIdentity}.
       ${physicalAnchor}
+      ${faceLock}
       ${attirePrompt}
       ${hairPrompt}
       
@@ -88,8 +102,8 @@ export default async function handler(req: any, res: any) {
       COMPOSITION: ${compositionPrompt}
       
       REALISM:
-      Shot on Arri Alexa. Visible skin texture. High fidelity.
-      ${startImage ? "CONTINUATION: Seamlessly continue the motion from the input image." : "Consistent facial features based on provided reference images, but allowing outfit changes as described."}
+      Shot on Arri Alexa. High fidelity. Sharp focus on face.
+      ${startImage ? "CONTINUATION: Seamlessly continue the motion from the input image." : "Consistent facial features based on provided reference images."}
     `;
 
     // 3. 執行生成
