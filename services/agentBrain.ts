@@ -7,7 +7,6 @@ const MODEL_ID = "gemini-3-flash-preview";
 export const AgentBrain = {
   
   initMemory(): AgentMemory {
-    // 預設給予一些假歷史資料，以便展示復盤功能
     return {
       history: [
         { videoId: 'm1', timestamp: '2023-10-01', topic: 'My Morning Routine', category: 'vlog', reasoning: 'Intro', stats: { views: 1200, likes: 100, retention: 0.4 } },
@@ -22,7 +21,8 @@ export const AgentBrain = {
   async think(
     profile: CharacterProfile,
     memory: AgentMemory,
-    trends: ShortsData[]
+    trends: ShortsData[],
+    topicHint?: string // 新增：允許外部指定主題
   ): Promise<{ 
       topic: string; 
       category: string; 
@@ -38,12 +38,16 @@ export const AgentBrain = {
       `- ${h.topic} [${h.category.toUpperCase()}]: ${h.stats?.views || 0} views`
     ).join('\n');
 
-    // 將當前的策略權重格式化給 AI
     const strategyContext = Object.entries(memory.strategy_bias)
         .map(([cat, weight]) => `${cat.toUpperCase()}: ${(weight * 100).toFixed(0)}% priority`)
         .join(', ');
 
     const trendKeywords = trends.map(t => t.title).join(', ');
+    
+    // 如果有使用者指定的主題
+    const userInstruction = topicHint 
+        ? `USER COMMAND: Focus strictly on the topic "${topicHint}". Generate a viral twist on this specific topic.` 
+        : `TASK: Generate the NEXT viral video concept based on trends.`;
 
     const prompt = `
       You are an autonomous AI Manager for a Virtual Idol.
@@ -52,32 +56,24 @@ export const AgentBrain = {
       Name: ${profile.name}
       Age: ${profile.age || "Young Adult"}
       Gender: ${profile.gender || "Female"}
-      Niche: ${profile.contentFocus}
       Personality: ${profile.personality}
-      Constraints: ${profile.constraints}
       
-      === 📊 PERFORMANCE DATA (REINFORCEMENT LEARNING) ===
-      Current Strategy Weights: ${strategyContext}
-      Recent Performance:
+      === 📊 DATA ===
+      Strategy: ${strategyContext}
+      Recent History:
       ${recentHistory}
+      Trends: ${trendKeywords}
       
-      *INSTRUCTION*: Pay attention to the weights. If 'DANCE' has high weight (e.g. > 40%), it means the audience loves it. Prioritize it.
+      === 🇹🇼 LOCALIZATION RULE (CRITICAL) ===
+      1. **Output Language**: Traditional Chinese (Taiwan/zh-TW).
+      2. **Tone**: Natural Taiwanese YouTuber style (use localized terms).
       
-      === 📈 MARKET TRENDS ===
-      ${trendKeywords}
+      === 🚫 VISUAL CONSTRAINT ===
+      1. **NO TEXT/SUBTITLES**: The prompt you generate MUST explicitly say "No text, clean footage".
+      2. **OOTD**: Suggest ADULT/MATURE outfits only (unless character is child).
       
-      === CRITICAL VISUAL INSTRUCTION ===
-      1. **OOTD Consistency**: When suggesting outfits, you MUST explicitly state the fit is for an ADULT/YOUNG ADULT (unless character is a child).
-      2. **Avoid Ambiguity**: DO NOT just say "Cute Dress". Say "High-fashion pastel dress, mature fit" or "K-pop Idol stage outfit". 
-      3. **Proportions**: Ensure the description implies an adult body structure, not a chibi or child-like one.
-      
-      === TASK ===
-      Generate the NEXT viral video concept.
-      
-      LOGIC:
-      1. Analyze trends.
-      2. **CROSS-REFERENCE WITH PERFORMANCE**: If previous videos of a certain category failed (low views), avoid that category unless you have a twist. If they succeeded, double down.
-      3. **OOTD**: Match outfit to context but keep it age-appropriate for the model.
+      === INSTRUCTION ===
+      ${userInstruction}
       
       Output JSON.
     `;
@@ -90,12 +86,12 @@ export const AgentBrain = {
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            topic: { type: Type.STRING, description: "Video Title/Concept" },
+            topic: { type: Type.STRING, description: "Video Title in Traditional Chinese" },
             category: { type: Type.STRING, enum: ["dance", "vlog", "skit", "challenge"] },
-            reasoning: { type: Type.STRING, description: "Explain decision based on past performance data" },
-            visual_style: { type: Type.STRING },
-            outfit_idea: { type: Type.STRING, description: "Detailed outfit description ensuring age-appropriate fit" },
-            hairstyle_idea: { type: Type.STRING }
+            reasoning: { type: Type.STRING, description: "Explanation in Traditional Chinese" },
+            visual_style: { type: Type.STRING, description: "Detailed visual prompt (keep in English for Veo model compatibility)" },
+            outfit_idea: { type: Type.STRING, description: "Outfit description in English (for Model)" },
+            hairstyle_idea: { type: Type.STRING, description: "Hairstyle description in English (for Model)" }
           },
           required: ["topic", "category", "reasoning", "visual_style", "outfit_idea", "hairstyle_idea"]
         }
@@ -105,15 +101,10 @@ export const AgentBrain = {
     return JSON.parse(response.text || '{}');
   },
 
-  /**
-   * 成效復盤 (Reinforcement Learning Step)
-   * 根據歷史影片的觀看數，重新分配策略權重
-   */
   async reflect(memory: AgentMemory): Promise<AgentMemory> {
      const history = memory.history;
      if (history.length === 0) return memory;
 
-     // 1. 計算各類別平均觀看數
      const categoryStats: Record<string, { totalViews: number, count: number }> = {
          dance: { totalViews: 0, count: 0 },
          vlog: { totalViews: 0, count: 0 },
@@ -128,22 +119,17 @@ export const AgentBrain = {
          }
      });
 
-     // 2. 計算加權分數
      let totalScore = 0;
      const scores: Record<string, number> = {};
-
-     // 基底分數 (避免冷門類別歸零)
      const BASE_SCORE = 1000; 
 
      Object.keys(categoryStats).forEach(cat => {
          const { totalViews, count } = categoryStats[cat];
          const avgViews = count > 0 ? totalViews / count : 0;
-         // 分數 = 平均觀看 + 基底
          scores[cat] = avgViews + BASE_SCORE; 
          totalScore += scores[cat];
      });
 
-     // 3. 正規化為百分比 (0.0 - 1.0)
      const newBias = {
          dance: Number((scores['dance'] / totalScore).toFixed(2)),
          vlog: Number((scores['vlog'] / totalScore).toFixed(2)),
@@ -151,22 +137,14 @@ export const AgentBrain = {
          challenge: Number((scores['challenge'] / totalScore).toFixed(2))
      };
      
-     // 修正誤差 (確保加總為 1)
      const sum = Object.values(newBias).reduce((a, b) => a + b, 0);
      if (sum !== 1) {
-         newBias.dance += (1 - sum); // 灌給 dance
+         newBias.dance += (1 - sum); 
      }
 
-     return {
-         ...memory,
-         strategy_bias: newBias
-     };
+     return { ...memory, strategy_bias: newBias };
   },
 
-  /**
-   * 與 Agent 討論企劃 (Chat & Refine)
-   * Agent 擁有最終決定權
-   */
   async chat(
     profile: CharacterProfile,
     currentPlan: any,
@@ -175,12 +153,12 @@ export const AgentBrain = {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const prompt = `
-      You are "${profile.name}", a Virtual Idol (or their AI Manager).
-      Your Personality: ${profile.personality}
-      Your Voice Tone: ${profile.voiceTone}
-      Constraints: ${profile.constraints}
+      You are "${profile.name}", a Virtual Idol.
+      Personality: ${profile.personality}
       
-      PHYSICAL IDENTITY: ${profile.age || "Young Adult"} ${profile.gender || "Female"}.
+      === 🇹🇼 LOCALIZATION ===
+      **Language**: Traditional Chinese (Taiwan).
+      **Tone**: Use authentic Taiwanese internet slang if fits personality.
       
       === CURRENT PLAN ===
       ${JSON.stringify(currentPlan, null, 2)}
@@ -189,12 +167,9 @@ export const AgentBrain = {
       "${userMessage}"
 
       === INSTRUCTION ===
-      The user (your producer) is giving feedback.
-      1. **Evaluate**: Does the feedback fit your brand?
-      2. **Age Consistency**: If the user asks for something "cute", interpret it as "Mature Cute" or "Idol Cute". NEVER regress to a child-like state.
-      3. **Decide**: You have FINAL SAY. 
-         - If good: Accept it, update the plan.
-         - If bad/cringe/out-of-character: Refuse politely and KEEP the plan same.
+      1. Discuss the plan with the user (your producer).
+      2. If user wants changes (e.g. "make it cuter"), update the plan fields.
+      3. **Visual Integrity**: Even if user says "cute", ensure the updated visual_style/outfit description maintains ADULT proportions in the prompt.
       
       Output JSON.
     `;
@@ -207,7 +182,7 @@ export const AgentBrain = {
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              reply: { type: Type.STRING, description: "Conversational response to the user" },
+              reply: { type: Type.STRING, description: "Response in Traditional Chinese" },
               updatedPlan: { 
                 type: Type.OBJECT,
                 properties: {

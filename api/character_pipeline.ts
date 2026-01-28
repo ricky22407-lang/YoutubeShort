@@ -47,7 +47,7 @@ export default async function handler(req: any, res: any) {
         }
     }
 
-    // 2. 構建 Prompt (加入物理錨點 Physical Anchor)
+    // 2. 構建 Prompt
     let compositionPrompt = "";
     switch (cameraAngle) {
         case 'close_up': compositionPrompt = "Extreme Close-up shot, focusing on face expression."; break;
@@ -59,13 +59,11 @@ export default async function handler(req: any, res: any) {
     const age = character.age || "20";
     const gender = character.gender || "Female";
     
-    // ★★★ 關鍵修正：定義物理錨點，防止變回小孩 ★★★
-    // 明確指出這個人是成人，身體比例必須維持
+    // 物理錨點
     const physicalAnchor = `PHYSICAL ANCHOR: Subject is a ${age}-year-old ${gender}. Maintain mature body proportions and height. DO NOT generate a child or chibi character.`;
 
     let attirePrompt = "";
     if (customOutfit) {
-        // 在服裝描述後加上 "fitted for an adult"，雙重保險
         attirePrompt = `CRITICAL OUTFIT OVERRIDE: The character is wearing ${customOutfit}, tailored fit for an adult. Ignore the outfit in reference images.`;
     }
     
@@ -74,8 +72,11 @@ export default async function handler(req: any, res: any) {
         hairPrompt = `HAIRSTYLE: ${customHair}.`;
     }
 
+    // ★★★ 關鍵更新：加入禁止字幕的指令 ★★★
+    const negativeConstraints = "NO TEXT, NO SUBTITLES, NO WATERMARKS, CLEAN FOOTAGE.";
+
     const fullPrompt = `
-      (Vertical 9:16) Cinematic video.
+      (Vertical 9:16) Cinematic video. ${negativeConstraints}
       
       SUBJECT IDENTITY: ${baseIdentity}.
       ${physicalAnchor}
