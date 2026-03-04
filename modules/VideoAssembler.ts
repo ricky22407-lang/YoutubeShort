@@ -1,11 +1,11 @@
-import { TTSService } from './TTSService';
-import { HeyGenService } from './HeyGenService';
+import { TTSService } from './ttsService.js';
+import { HeyGenService } from './HeyGenService.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs';
 import path from 'path';
-import { ScriptData } from '../types';
-import { searchVideos } from '../services/pexelsService';
+import { ScriptData } from '../types.js';
+import { searchVideos } from '../services/pexelsService.js';
 import { GoogleGenAI } from '@google/genai';
 import { finished } from 'stream/promises';
 import { Readable } from 'stream';

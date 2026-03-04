@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { ScriptData } from "../types";
+import { ScriptData } from "../types.js";
 
 export class ScriptGenerator {
   private ai: GoogleGenAI;
