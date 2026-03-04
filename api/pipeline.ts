@@ -1,15 +1,16 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { Buffer } from 'buffer';
 import { ScriptGenerator } from '../modules/ScriptGenerator.js';
-import { VideoAssembler } from '../modules/VideoAssembler.js'; // 這裡一定要加 .js
+import { VideoAssembler } from '../modules/VideoAssembler.js';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import { put, del } from '@vercel/blob';
 
 export const config = {
   maxDuration: 300, 
 };
 
-// 輔助：清理 JSON 字串
 function cleanJson(text: string): string {
   if (!text) return '{}';
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
@@ -35,10 +36,6 @@ async function refreshAccessToken(refreshToken: string) {
   return data;
 }
 
-async function getTrends(niche: string, region: string, apiKey: string) {
-  return { nicheTrends: [], globalTrends: [] }; 
-}
-
 export default async function handler(req: any, res: any) {
   try {
     if (req.method !== 'POST') {
@@ -52,24 +49,22 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: false, error: 'System API_KEY Missing' });
     }
 
-    const { stage, channel, metadata, scriptData } = req.body;
+    // 這裡我們多接收了前端傳來的 previousVideoUrl (舊影片網址)
+    const { stage, channel, metadata, scriptData, previousVideoUrl } = req.body;
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
       case 'suggest_topics': {
         const prompt = `
             Generate 5 viral YouTube Shorts topic ideas for this channel.
-            
             Channel Niche: ${channel.niche}
             Channel Concept: ${channel.concept || 'General'}
             Target Audience: ${channel.language === 'en' ? 'Global' : 'Taiwan/Hong Kong (Traditional Chinese)'}
-            
             ${channel.optimizationReport ? `
             Insights from Optimization Report:
             - Trending Topics: ${channel.optimizationReport.trendingTopics?.join(', ')}
             - Strategic Advice: ${channel.optimizationReport.strategicAdvice}
             ` : ''}
-            
             Output ONLY a JSON array of strings. Example: ["Topic 1", "Topic 2"]
         `;
 
@@ -91,7 +86,6 @@ export default async function handler(req: any, res: any) {
 
       case 'generate_script': {
         const generator = new ScriptGenerator(API_KEY);
-        // Use provided topic or fallback to niche
         const topicToUse = req.body.topic || channel.niche;
         const script = await generator.generate(topicToUse, channel.language || 'zh-TW');
         return res.status(200).json({ success: true, script });
@@ -103,11 +97,30 @@ export default async function handler(req: any, res: any) {
         }
         
         const assembler = new VideoAssembler(API_KEY, PEXELS_API_KEY);
-        const outputFilename = `mpt_${Date.now()}.mp4`;
+        const outputFilename = path.join(os.tmpdir(), `mpt_${Date.now()}.mp4`);
         
         try {
-            const relativePath = await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile);
-            return res.status(200).json({ success: true, videoUrl: `/${relativePath}` });
+            // 【新功能】如果前端有傳來舊影片的網址，我們就在這裡把它從 Vercel Blob 刪除
+            if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
+                try {
+                    await del(previousVideoUrl);
+                    console.log("已刪除雲端舊影片:", previousVideoUrl);
+                } catch (delError) {
+                    console.warn("舊影片刪除失敗 (可能已不存在)");
+                }
+            }
+
+            // 合成新影片
+            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile);
+            
+            // 讀取檔案並上傳到 Vercel Blob
+            const videoBuffer = fs.readFileSync(outputFilename);
+            const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, {
+                access: 'public',
+            });
+
+            // 回傳最新的影片網址給前端
+            return res.status(200).json({ success: true, videoUrl: blob.url });
         } catch (e: any) {
             console.error("Assembly Failed:", e);
             return res.status(200).json({ success: false, error: `Assembly Failed: ${e.message}` });
@@ -123,18 +136,12 @@ export default async function handler(req: any, res: any) {
              === AGENT MODE ACTIVE ===
              You are acting as the AI Virtual Idol "${channel.characterProfile.name}".
              Persona: ${channel.characterProfile.description}.
-             
              Instead of generic content, generate content that fits your specific persona.
              Think: "What would ${channel.characterProfile.name} post today to get attention?"
-             
              **CRITICAL: ADAPTIVE OUTFIT**
              You MUST change the outfit description based on the video context.
-             - If working out -> Gym clothes.
-             - If at home -> Pajamas.
-             - If going out -> Streetwear.
              Do NOT say "generic clothes". Be specific (e.g., "Pink oversized hoodie and yoga pants").
            `;
-           
            visualStyleOverride = "Visual Style: Shot on iPhone 15 Pro, vertical vlog format, slight camera shake, raw unedited feel. The character should look at the camera like they are Facetiming a friend.";
         } else {
            promptContext = `Target Niche: ${channel.niche}. Concept: ${channel.concept}`;
@@ -142,24 +149,19 @@ export default async function handler(req: any, res: any) {
         }
 
         const targetLang = channel.language === 'en' ? 'English' : 'Traditional Chinese (zh-TW)';
-        
         const analysisParams = {
           contents: `
           ${promptContext}
-          
           TASK: Create a viral strategy for a YouTube Shorts video.
           Output Language: ${targetLang}.
-          
           === REALISM ENFORCER (CRITICAL) ===
           To ensure the video does NOT look like a generic AI animation:
           1. **Texture**: Specify "visible skin pores", "imperfections", "flyaway hairs", "dust particles".
-          2. **Lighting**: Use "Natural window light", "Harsh neon", or "Golden hour lens flare". Avoid "Perfect studio lighting".
+          2. **Lighting**: Use "Natural window light", "Harsh neon", or "Golden hour lens flare".
           3. **Camera**: Specify "Handheld", "GoPro POV", "Security Camera grainy", or "35mm film grain".
           4. **Motion**: "Micro-movements" (breathing, blinking, hair swaying) are better than complex physics.
-          
           ${visualStyleOverride}
-
-          Return JSON: { "prompt": "The detailed Veo prompt (MUST include specific outfit and hairstyle description fitting the scene)", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
+          Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
           config: {
             responseMimeType: "application/json",
             responseSchema: {
@@ -185,9 +187,6 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'generate_optimization_report': {
-        // 1. Fetch/Mock Data
-        // In a real app, we would use channel.auth to fetch real YT analytics
-        
         const mockPerformanceData = {
             views: Math.floor(Math.random() * 10000) + 500,
             subscribers: Math.floor(Math.random() * 1000) + 50,
@@ -199,22 +198,15 @@ export default async function handler(req: any, res: any) {
             ]
         };
 
-        // 2. Fetch Trends (Mocked)
         const currentTrends = [
             "ASMR packing", "Silent vlog", "Color analysis", "Digital camera aesthetic", "Day in my life"
         ];
 
-        // 3. AI Analysis
         const prompt = `
             Analyze this YouTube channel's performance and current market trends to generate an Optimization Report.
-            
             Channel Niche: ${channel.niche}
-            Channel Concept: ${channel.concept || 'General Lifestyle'}
-            Character: ${channel.characterProfile?.name || 'N/A'}
-            
             Performance Data: ${JSON.stringify(mockPerformanceData)}
             Current Market Trends: ${JSON.stringify(currentTrends)}
-            
             Output JSON with:
             - channelHealthScore (0-100)
             - keyInsights (Array of strings, what went well/wrong)
@@ -244,7 +236,6 @@ export default async function handler(req: any, res: any) {
 
         const report = JSON.parse(cleanJson(response.text || ''));
         report.generatedAt = new Date().toISOString();
-        
         return res.status(200).json({ success: true, report });
       }
 
@@ -254,14 +245,12 @@ export default async function handler(req: any, res: any) {
              try {
                 const refreshed = await refreshAccessToken(channel.auth.refresh_token);
                 currentAccessToken = refreshed.access_token;
-             } catch(e) { console.warn("Refresh failed", e); }
+             } catch(e) {}
         }
 
         const videoEngine = channel.mptConfig?.videoEngine || 'veo';
-        
         if (videoEngine === 'jimeng') {
-             // Placeholder for Jimeng
-             throw new Error("Jimeng Video Generation not yet implemented in Auto-Pilot mode. Please use Veo for now.");
+             throw new Error("Jimeng Video Generation not yet implemented. Please use Veo.");
         }
 
         let operation = await ai.models.generateVideos({
@@ -278,15 +267,10 @@ export default async function handler(req: any, res: any) {
         }
         
         if (!operation.done) throw new Error("Veo Timeout");
-
-        if (operation.error) {
-             throw new Error(`Veo Generation Failed: ${operation.error.message}`);
-        }
+        if (operation.error) throw new Error(`Veo Generation Failed: ${operation.error.message}`);
 
         const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-        if (!downloadLink) {
-             throw new Error("Veo completed but returned no video URI.");
-        }
+        if (!downloadLink) throw new Error("Veo completed but returned no video URI.");
 
         const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
         const videoBuffer = Buffer.from(await videoRes.arrayBuffer());

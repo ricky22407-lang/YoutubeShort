@@ -4,6 +4,8 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs';
 import path from 'path';
+import os from 'os'; // 👉 新增這行
+import { ScriptData } from '../types.js';
 import { ScriptData } from '../types.js';
 import { searchVideos } from '../services/pexelsService.js';
 import { GoogleGenAI } from '@google/genai';
@@ -21,7 +23,8 @@ export class VideoAssembler {
   private ai: GoogleGenAI;
 
   constructor(apiKey: string, pexelsApiKey: string) {
-    this.tempDir = path.join(process.cwd(), 'temp');
+    // 👉 改用 os.tmpdir() 取得系統合法暫存目錄
+    this.tempDir = path.join(os.tmpdir(), `yt_shorts_${Date.now()}`);
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
