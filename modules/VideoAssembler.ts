@@ -2,17 +2,19 @@ import { TTSService } from '../services/ttsService.js';
 import { HeyGenService } from './HeyGenService.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
+import ffprobePath from '@ffprobe-installer/ffprobe'; // 👉 新增這行：引入 ffprobe
 import fs from 'fs';
 import path from 'path';
-import os from 'os'; // 👉 新增這行
+import os from 'os'; // 確保有 os
 import { ScriptData } from '../types.js';
 import { searchVideos } from '../services/pexelsService.js';
 import { GoogleGenAI } from '@google/genai';
 import { finished } from 'stream/promises';
 import { Readable } from 'stream';
 
-// Initialize ffmpeg
+// Initialize ffmpeg & ffprobe
 ffmpeg.setFfmpegPath(ffmpegPath.path);
+ffmpeg.setFfprobePath(ffprobePath.path); // 👉 新增這行：告訴系統 ffprobe 的路徑
 
 export class VideoAssembler {
   private tempDir: string;
