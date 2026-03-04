@@ -1,5 +1,12 @@
-
 {
+  "functions": {
+    "api/**/*": {
+      "includeFiles": [
+        "node_modules/@ffprobe-installer/linux-x64/**",
+        "node_modules/@ffmpeg-installer/linux-x64/**"
+      ]
+    }
+  },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
