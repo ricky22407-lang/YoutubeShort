@@ -1,4 +1,13 @@
 
+export interface OptimizationReport {
+  generatedAt: string;
+  channelHealthScore: number; // 0-100
+  keyInsights: string[];
+  strategicAdvice: string;
+  trendingTopics: string[];
+  suggestedActions: string[];
+}
+
 export interface ChannelConfig {
   id: string;
   name: string;
@@ -12,22 +21,72 @@ export interface ChannelConfig {
   searchKeywords?: string[];
   regionCode?: string;
   
-  // 角色驅動模式專用
+  // Legacy / Compatibility
+  autoDeploy?: boolean;
+  weeklySchedule?: {
+    days: number[];
+    times: string[];
+  };
+  
+  // 角色驅動模式專用 (IP Foundry)
   mode?: 'classic' | 'character';
   characterProfile?: CharacterProfile;
-  targetVibeId?: string;
   
-  // 排程系統
-  autoDeploy: boolean;
-  weeklySchedule?: {
+  // Data Feedback Loop
+  optimizationReport?: OptimizationReport;
+  
+  // 排程系統 (Auto-Pilot)
+  autoPilot: {
+    enabled: boolean;
+    frequency: 'daily' | 'weekly';
+    postTime: string; // "20:00"
     days: number[]; // 0-6 (Sun-Sat)
-    times: string[]; // ["HH:mm"]
+    engine: 'veo' | 'sora' | 'jimeng';
+    mode: 'hybrid' | 'ai_only'; // New: Production Mode for Automation
   };
   lastRun?: string;
   lastTriggeredSlot?: string;
 
-  // V9: Agent Memory System
-  agentMemory?: AgentMemory;
+  // MPT Configuration (The Structure)
+  mptConfig?: {
+    voiceId?: string; // e.g., "en-US-Journey-D" or Gemini Voice Name
+    bgmVolume?: number; // 0.0 - 1.0 (default 0.1)
+    font?: string;
+    fontSize?: number;
+    subtitleColor?: string; // Hex color for subtitles (e.g., #FFFF00)
+    videoRatio?: string; // "9:16"
+    useStockFootage?: boolean; // If true, use Pexels; if false, use Veo
+    videoEngine?: 'veo' | 'sora' | 'jimeng' | 'heygen'; // New: AI Video Engine Selection
+    ttsEngine?: 'edge' | 'elevenlabs';
+    elevenLabsVoiceId?: string;
+    heygenAvatarId?: string; // For Digital Twin
+  };
+
+  // Social Media Integration (Omni-Channel)
+  social: {
+    youtube: { connected: boolean; token?: any; upload: boolean };
+    instagram: { connected: boolean; token?: any; upload: boolean; pageId?: string };
+    facebook: { connected: boolean; token?: any; upload: boolean; pageId?: string };
+  };
+}
+
+export interface ScriptData {
+  title: string;
+  scenes: ScriptScene[];
+  keywords: string[]; // For SEO/Metadata
+  bgmKeyword?: string; // For searching BGM
+  socialMediaCopy?: { // New: Generated Copy for Social Media
+    title: string;
+    description: string;
+    hashtags: string[];
+  };
+}
+
+export interface ScriptScene {
+  id: number;
+  narration: string; // The text to be spoken
+  visual_cue: string; // Description for searching stock footage or generating AI video
+  duration_estimate?: number; // Estimated seconds
 }
 
 export interface CharacterProfile {
@@ -53,6 +112,7 @@ export interface CharacterProfile {
     fullBody?: string;  // Outfit Detail
     side?: string;      // Structure Detail
     back?: string;      // Back Detail (新增)
+    expressionSheet?: string; // 表情包
   };
 }
 

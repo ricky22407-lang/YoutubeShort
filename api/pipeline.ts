@@ -1,6 +1,9 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { Buffer } from 'buffer';
+import { ScriptGenerator } from '../modules/ScriptGenerator';
+import { VideoAssembler } from '../modules/VideoAssembler';
+import path from 'path';
 
 export const config = {
   maxDuration: 300, 
@@ -43,14 +46,74 @@ export default async function handler(req: any, res: any) {
     }
     
     const API_KEY = process.env.API_KEY;
+    const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
+
     if (!API_KEY) {
       return res.status(200).json({ success: false, error: 'System API_KEY Missing' });
     }
 
-    const { stage, channel, metadata } = req.body;
+    const { stage, channel, metadata, scriptData } = req.body;
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
+      case 'suggest_topics': {
+        const prompt = `
+            Generate 5 viral YouTube Shorts topic ideas for this channel.
+            
+            Channel Niche: ${channel.niche}
+            Channel Concept: ${channel.concept || 'General'}
+            Target Audience: ${channel.language === 'en' ? 'Global' : 'Taiwan/Hong Kong (Traditional Chinese)'}
+            
+            ${channel.optimizationReport ? `
+            Insights from Optimization Report:
+            - Trending Topics: ${channel.optimizationReport.trendingTopics?.join(', ')}
+            - Strategic Advice: ${channel.optimizationReport.strategicAdvice}
+            ` : ''}
+            
+            Output ONLY a JSON array of strings. Example: ["Topic 1", "Topic 2"]
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                }
+            }
+        });
+        
+        const topics = JSON.parse(cleanJson(response.text || '[]'));
+        return res.status(200).json({ success: true, topics });
+      }
+
+      case 'generate_script': {
+        const generator = new ScriptGenerator(API_KEY);
+        // Use provided topic or fallback to niche
+        const topicToUse = req.body.topic || channel.niche;
+        const script = await generator.generate(topicToUse, channel.language || 'zh-TW');
+        return res.status(200).json({ success: true, script });
+      }
+
+      case 'render_mpt': {
+        if (!PEXELS_API_KEY) {
+           return res.status(200).json({ success: false, error: 'PEXELS_API_KEY Missing' });
+        }
+        
+        const assembler = new VideoAssembler(API_KEY, PEXELS_API_KEY);
+        const outputFilename = `mpt_${Date.now()}.mp4`;
+        
+        try {
+            const relativePath = await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile);
+            return res.status(200).json({ success: true, videoUrl: `/${relativePath}` });
+        } catch (e: any) {
+            console.error("Assembly Failed:", e);
+            return res.status(200).json({ success: false, error: `Assembly Failed: ${e.message}` });
+        }
+      }
+
       case 'analyze': {
         let promptContext = "";
         let visualStyleOverride = "";
@@ -117,8 +180,72 @@ export default async function handler(req: any, res: any) {
             ...analysisParams
         });
         
-        const resultText = response.text;
+        const resultText = response.text || '';
         return res.status(200).json({ success: true, metadata: JSON.parse(cleanJson(resultText)) });
+      }
+
+      case 'generate_optimization_report': {
+        // 1. Fetch/Mock Data
+        // In a real app, we would use channel.auth to fetch real YT analytics
+        
+        const mockPerformanceData = {
+            views: Math.floor(Math.random() * 10000) + 500,
+            subscribers: Math.floor(Math.random() * 1000) + 50,
+            engagementRate: (Math.random() * 10 + 2).toFixed(2) + '%',
+            recentVideos: [
+                { title: "My First Vlog", views: 1200, retention: 0.45 },
+                { title: "GRWM for School", views: 3500, retention: 0.60 },
+                { title: "Failed Cooking Attempt", views: 800, retention: 0.30 }
+            ]
+        };
+
+        // 2. Fetch Trends (Mocked)
+        const currentTrends = [
+            "ASMR packing", "Silent vlog", "Color analysis", "Digital camera aesthetic", "Day in my life"
+        ];
+
+        // 3. AI Analysis
+        const prompt = `
+            Analyze this YouTube channel's performance and current market trends to generate an Optimization Report.
+            
+            Channel Niche: ${channel.niche}
+            Channel Concept: ${channel.concept || 'General Lifestyle'}
+            Character: ${channel.characterProfile?.name || 'N/A'}
+            
+            Performance Data: ${JSON.stringify(mockPerformanceData)}
+            Current Market Trends: ${JSON.stringify(currentTrends)}
+            
+            Output JSON with:
+            - channelHealthScore (0-100)
+            - keyInsights (Array of strings, what went well/wrong)
+            - strategicAdvice (String, high-level strategy for next week)
+            - trendingTopics (Array of strings, relevant topics to ride)
+            - suggestedActions (Array of strings, specific video ideas or changes)
+        `;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        channelHealthScore: { type: Type.NUMBER },
+                        keyInsights: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        strategicAdvice: { type: Type.STRING },
+                        trendingTopics: { type: Type.ARRAY, items: { type: Type.STRING } },
+                        suggestedActions: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    },
+                    required: ["channelHealthScore", "keyInsights", "strategicAdvice", "trendingTopics", "suggestedActions"]
+                }
+            }
+        });
+
+        const report = JSON.parse(cleanJson(response.text || ''));
+        report.generatedAt = new Date().toISOString();
+        
+        return res.status(200).json({ success: true, report });
       }
 
       case 'render_and_upload': {
@@ -128,6 +255,13 @@ export default async function handler(req: any, res: any) {
                 const refreshed = await refreshAccessToken(channel.auth.refresh_token);
                 currentAccessToken = refreshed.access_token;
              } catch(e) { console.warn("Refresh failed", e); }
+        }
+
+        const videoEngine = channel.mptConfig?.videoEngine || 'veo';
+        
+        if (videoEngine === 'jimeng') {
+             // Placeholder for Jimeng
+             throw new Error("Jimeng Video Generation not yet implemented in Auto-Pilot mode. Please use Veo for now.");
         }
 
         let operation = await ai.models.generateVideos({

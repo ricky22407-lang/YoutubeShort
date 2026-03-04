@@ -40,7 +40,7 @@ export const DataInputForm: React.FC<DataInputFormProps> = ({ initialShortsData,
       {isExpanded && (
         <div className="mt-4 animate-fade-in space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-400 mb-1 uppercase">Raw Shorts Data (JSON)</label>
+            <label className="block text-xs font-bold text-slate-400 mb-1 uppercase">原始 Shorts 數據 (JSON)</label>
             <textarea
               value={shortsJson}
               onChange={(e) => setShortsJson(e.target.value)}
@@ -49,7 +49,7 @@ export const DataInputForm: React.FC<DataInputFormProps> = ({ initialShortsData,
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-slate-400 mb-1 uppercase">Channel State (JSON)</label>
+            <label className="block text-xs font-bold text-slate-400 mb-1 uppercase">頻道狀態 (JSON)</label>
             <textarea
               value={channelJson}
               onChange={(e) => setChannelJson(e.target.value)}
