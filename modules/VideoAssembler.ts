@@ -6,7 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os'; // 👉 新增這行
 import { ScriptData } from '../types.js';
-import { ScriptData } from '../types.js';
 import { searchVideos } from '../services/pexelsService.js';
 import { GoogleGenAI } from '@google/genai';
 import { finished } from 'stream/promises';
@@ -28,7 +27,7 @@ export class VideoAssembler {
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
-    this.ttsService = new TTSService();
+    this.ttsService = new TTSService(apiKey);
     this.heyGenService = new HeyGenService();
     this.pexelsApiKey = pexelsApiKey;
     this.ai = new GoogleGenAI({ apiKey });
@@ -131,7 +130,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           
           // A. Audio (TTS)
           if (!fs.existsSync(audioPath)) {
-              await this.ttsService.generateAudio(scene.narration, audioPath, voiceId, ttsEngine);
+              await this.ttsService.generateAudio(scene.narration, audioPath, voiceId);
           }
           
           // B. Video
