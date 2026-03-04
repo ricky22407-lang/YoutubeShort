@@ -1,7 +1,7 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { Buffer } from 'buffer';
-import { ScriptGenerator } from '../modules/ScriptGenerator';
+import { ScriptGenerator } from '../modules/ScriptGenerator.js';
 import { VideoAssembler } from '../modules/VideoAssembler';
 import path from 'path';
 
