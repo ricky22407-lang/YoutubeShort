@@ -18,7 +18,7 @@ const fonts = [
     { name: 'ZCOOLKuaiLe-Regular.ttf', url: 'https://github.com/google/fonts/raw/main/ofl/zcoolkuaile/ZCOOLKuaiLe-Regular.ttf' },
     // English
     // Roboto (Variable Font)
-    { name: 'Roboto-Bold.ttf', url: 'https://github.com/google/fonts/raw/main/apache/roboto/Roboto%5Bwdth%2Cwght%5D.ttf' },
+    { name: 'Roboto-Bold.ttf', url: 'https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Bold.ttf' },
     { name: 'Anton-Regular.ttf', url: 'https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf' },
     { name: 'Bangers-Regular.ttf', url: 'https://github.com/google/fonts/raw/main/ofl/bangers/Bangers-Regular.ttf' }
 ];

@@ -29,7 +29,7 @@ export class VideoAssembler {
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
-    this.ttsService = new TTSService(apiKey);
+    this.ttsService = new TTSService();
     this.heyGenService = new HeyGenService();
     this.pexelsApiKey = pexelsApiKey;
     this.ai = new GoogleGenAI({ apiKey });
