@@ -4,7 +4,7 @@
   ],
   "functions": {
     "api/**/*.ts": {
-      "includeFiles": "{node_modules/@ffmpeg-installer/linux-x64/ffmpeg,node_modules/@ffprobe-installer/linux-x64/ffprobe,fonts/*.ttf}"
+      "includeFiles": "{node_modules/@ffmpeg-installer/linux-x64/ffmpeg,node_modules/@ffmpeg-installer/linux-x64/package.json,node_modules/@ffprobe-installer/linux-x64/ffprobe,node_modules/@ffprobe-installer/linux-x64/package.json,fonts/*.ttf}"
     }
   }
 }
