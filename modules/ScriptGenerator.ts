@@ -79,7 +79,7 @@ export class ScriptGenerator {
     }
 
     const response = await this.ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.1-pro-preview',
       contents: contents.length > 1 ? contents : promptText,
       config: {
         responseMimeType: "application/json",

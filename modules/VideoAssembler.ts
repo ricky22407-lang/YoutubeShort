@@ -120,10 +120,14 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       // Placeholder Folder IDs - User needs to fill these in .env or config
       // For now, we use empty strings as placeholders as requested.
       const moodMap: Record<string, string> = {
-          epic: 'FOLDER_ID_HERE', 
-          relaxing: 'FOLDER_ID_HERE',
-          funny: 'FOLDER_ID_HERE',
-          suspense: 'FOLDER_ID_HERE'
+          epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn', 
+          relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ',
+          edm: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT',
+          happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y',
+          chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF',
+          hiphop: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56',
+          funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt',
+          suspense: '1CFiBDHVuHAKFNrUtrVxFFTunLJa0xQm2'
       };
 
       let folderId = moodMap[mood];
