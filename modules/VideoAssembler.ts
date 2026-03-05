@@ -2,10 +2,10 @@ import { TTSService } from './TTSService.js';
 import { HeyGenService } from './HeyGenService.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
-import ffprobePath from '@ffprobe-installer/ffprobe'; // 👉 新增這行：引入 ffprobe
+import ffprobePath from '@ffprobe-installer/ffprobe'; 
 import fs from 'fs';
 import path from 'path';
-import os from 'os'; // 確保有 os
+import os from 'os'; 
 import { ScriptData } from '../types.js';
 import { searchVideos } from '../services/pexelsService.js';
 import { GoogleGenAI } from '@google/genai';
@@ -14,7 +14,7 @@ import { Readable } from 'stream';
 
 // Initialize ffmpeg & ffprobe
 ffmpeg.setFfmpegPath(ffmpegPath.path);
-ffmpeg.setFfprobePath(ffprobePath.path); // 👉 新增這行：告訴系統 ffprobe 的路徑
+ffmpeg.setFfprobePath(ffprobePath.path); 
 
 export class VideoAssembler {
   private tempDir: string;
@@ -24,7 +24,6 @@ export class VideoAssembler {
   private ai: GoogleGenAI;
 
   constructor(apiKey: string, pexelsApiKey: string) {
-    // 👉 改用 os.tmpdir() 取得系統合法暫存目錄
     this.tempDir = path.join(os.tmpdir(), `yt_shorts_${Date.now()}`);
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
@@ -49,46 +48,6 @@ export class VideoAssembler {
     if (!res.ok) throw new Error(`Failed to download ${url}: ${res.statusText}`);
     const fileStream = fs.createWriteStream(dest);
     await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-  }
-
-  private generateAssSubtitles(events: { start: number; end: number; text: string }[], fontSize: number, color: string, fontName: string): string {
-    // Map filename to Font Family Name
-    const fontMap: Record<string, string> = {
-        'NotoSansTC-Bold.ttf': 'Noto Sans TC',
-        'NotoSerifTC-Bold.ttf': 'Noto Serif TC',
-        'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe',
-        'Roboto-Bold.ttf': 'Roboto',
-        'Anton-Regular.ttf': 'Anton',
-        'Bangers-Regular.ttf': 'Bangers'
-    };
-    const fontFamily = fontMap[fontName] || 'Arial';
-
-    const header = `[Script Info]
-ScriptType: v4.00+
-PlayResX: 720
-PlayResY: 1280
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${fontFamily},${fontSize},&H00${color.replace('#', '')},&H000000FF,&H00000000,&H80000000,-1,0,1,2,0,2,10,10,100,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`;
-
-    const formatTime = (seconds: number) => {
-      const h = Math.floor(seconds / 3600);
-      const m = Math.floor((seconds % 3600) / 60);
-      const s = Math.floor(seconds % 60);
-      const ms = Math.floor((seconds % 1) * 100);
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
-    };
-
-    const eventLines = events.map(e => {
-      return `Dialogue: 0,${formatTime(e.start)},${formatTime(e.end)},Default,,0,0,0,,${e.text}`;
-    }).join('\n');
-
-    return header + eventLines;
   }
 
   private async getFilesInDriveFolder(folderId: string): Promise<{ id: string; name: string }[]> {
@@ -117,8 +76,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   private async fetchDynamicBgm(mood: string): Promise<string> {
       if (!mood || mood === 'none') return '';
 
-      // Placeholder Folder IDs - User needs to fill these in .env or config
-      // For now, we use empty strings as placeholders as requested.
       const moodMap: Record<string, string> = {
           epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn', 
           relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ',
@@ -173,9 +130,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const fontName = config?.fontName || 'NotoSansTC-Bold.ttf';
     const bgmMood = config?.bgmMood || 'none';
     
-    // Determine Voice ID:
-    // If ElevenLabs, use elevenLabsVoiceId or fallback to voiceId (which might be generic)
-    // If Edge, use voiceId or default
     let voiceId = config?.voiceId || 'zh-TW-HsiaoChenNeural';
     if (ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId) {
         voiceId = config.elevenLabsVoiceId;
@@ -187,11 +141,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for (const scene of script.scenes) {
       const sceneId = scene.id;
       
-      // Paths
       const audioPath = path.join(this.tempDir, `scene_${sceneId}.mp3`);
       let videoPath = path.join(this.tempDir, `scene_${sceneId}.mp4`);
 
-      // Special Handling for HeyGen (Digital Twin)
       if (videoEngine === 'heygen' && config?.heygenAvatarId) {
           if (!fs.existsSync(videoPath)) {
               console.log(`Generating HeyGen Video for Scene ${sceneId}...`);
@@ -199,7 +151,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
               await this.downloadFile(heyGenUrl, videoPath);
           }
           
-          // Extract Audio from HeyGen Video for consistency in pipeline (subtitles, mixing)
           if (!fs.existsSync(audioPath)) {
              await new Promise((resolve, reject) => {
                  ffmpeg(videoPath)
@@ -218,9 +169,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
               await this.ttsService.generateAudio(scene.narration, audioPath, voiceId);
           }
           
-          // B. Video
+          // 👉 B. Video (這裡就是我們更新的智慧帶貨邏輯！)
           if (!fs.existsSync(videoPath)) {
-              if (useStockFootage) {
+              const isFirstSceneWithProduct = script.referenceImage && scene.id === 1;
+
+              if (useStockFootage && !isFirstSceneWithProduct) {
                   const videoUrls = await searchVideos(scene.visual_cue, this.pexelsApiKey);
                   if (videoUrls.length > 0) {
                     await this.downloadFile(videoUrls[0], videoPath);
@@ -250,7 +203,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     let assEvents = '';
     let currentTime = 0;
 
-    // Helper to parse VTT timestamp (00:00:00.000) to seconds
     const parseVttTime = (timeStr: string): number => {
         const parts = timeStr.split(':');
         const s = parseFloat(parts[2]);
@@ -259,7 +211,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return h * 3600 + m * 60 + s;
     };
 
-    // Helper to format seconds to ASS timestamp (H:MM:SS.cc)
     const formatAssTime = (seconds: number): string => {
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
@@ -268,16 +219,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     };
 
-    // Helper to convert Hex to ASS BGR format
     const hexToASS = (hex: string) => {
         const clean = hex.replace('#', '');
         if (clean.length === 6) {
             const r = clean.substring(0, 2);
             const g = clean.substring(2, 4);
             const b = clean.substring(4, 6);
-            return `&H00${b}${g}${r}`; // Alpha + BGR
+            return `&H00${b}${g}${r}`; 
         }
-        return '&H00FFFF'; // Default Yellow
+        return '&H00FFFF'; 
     };
 
     for (const asset of sceneAssets) {
@@ -288,25 +238,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             let i = 0;
             while (i < lines.length) {
                 const line = lines[i].trim();
-                // VTT timestamp line: 00:00:00.000 --> 00:00:02.500
                 if (line.includes('-->')) {
                     const times = line.split('-->');
                     const start = parseVttTime(times[0].trim());
                     const end = parseVttTime(times[1].trim());
-                    const text = lines[i + 1]?.trim(); // Next line is text
+                    const text = lines[i + 1]?.trim(); 
                     
                     if (text) {
-                        // Adjust time by adding current scene offset
                         const absStart = currentTime + start;
                         const absEnd = currentTime + end;
-                        const durationMs = Math.round((end - start) * 100); // centiseconds for \k tag
+                        const durationMs = Math.round((end - start) * 100); 
 
-                        // Karaoke Effect Logic:
-                        // Since Edge TTS VTT is usually line-based, not word-based, we simulate word-level highlight
-                        // by splitting the sentence and distributing duration.
-                        
-                        // Estimate word duration:
-                        const words = text.split(''); // Character level for Chinese
+                        const words = text.split(''); 
                         const charDuration = Math.floor(durationMs / words.length);
                         
                         let karaokeText = '';
@@ -316,13 +259,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
                         assEvents += `Dialogue: 0,${formatAssTime(absStart)},${formatAssTime(absEnd)},Default,,0,0,0,,${karaokeText}\n`;
                     }
-                    i += 2; // Skip time and text lines
+                    i += 2; 
                 } else {
                     i++;
                 }
             }
         } else {
-            // Fallback if no VTT (e.g. manual text)
             const start = currentTime;
             const end = currentTime + asset.duration;
             assEvents += `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${asset.text}\n`;
@@ -330,14 +272,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         currentTime += asset.duration;
     }
 
-    // Generate ASS Header with Karaoke Style
-    // PrimaryColour: &H00FFFF (Yellow) - Fill color
-    // SecondaryColour: &H00FFFFFF (White) - Unfilled color
-    // const fontSize = config?.fontSize ?? 80; // Already declared at start of function
-    const primaryColor = config?.subtitleColor ? hexToASS(config.subtitleColor) : '&H00FFFF'; // Yellow
-    const secondaryColor = '&H00FFFFFF'; // White
+    const primaryColor = config?.subtitleColor ? hexToASS(config.subtitleColor) : '&H00FFFF'; 
+    const secondaryColor = '&H00FFFFFF'; 
 
-    // Map filename to Font Family Name
     const fontMap: Record<string, string> = {
         'NotoSansTC-Bold.ttf': 'Noto Sans TC',
         'NotoSerifTC-Bold.ttf': 'Noto Serif TC',
@@ -363,18 +300,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     fs.writeFileSync(assPath, assHeader + assEvents);
 
-    // 3. Assemble Video with FFmpeg (Concatenate + Mix Audio + Burn Subtitles)
     const fileListPath = path.join(this.tempDir, 'files.txt');
     const fileContent = sceneAssets.map(a => `file '${a.video}'\nduration ${a.duration}`).join('\n');
     fs.writeFileSync(fileListPath, fileContent);
 
-    // Concatenate Audio first
-    const fullTtsPath = path.join(this.tempDir, 'full_tts.mp3');
-    
-    // Download BGM if needed
     let bgmPath = '';
     if (bgmMood && bgmMood !== 'none') {
-        // Use the new dynamic fetcher
         const bgmUrl = await this.fetchDynamicBgm(bgmMood);
         
         if (bgmUrl) {
@@ -391,52 +322,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         }
     }
 
-    // We will build a complex filter command
     return new Promise((resolve, reject) => {
         const cmd = ffmpeg();
 
-        // Inputs
         sceneAssets.forEach(a => {
             cmd.input(a.video);
         });
 
-        // Audio Inputs (TTS)
         sceneAssets.forEach(a => {
             cmd.input(a.audio);
         });
 
-        // BGM Input
         if (bgmPath && fs.existsSync(bgmPath)) {
             cmd.input(bgmPath);
         }
 
-        // Build Filter Complex
         const filterComplex: string[] = [];
         const videoOutputs: string[] = [];
         const audioOutputs: string[] = [];
 
-        // Normalize Video
         sceneAssets.forEach((_, i) => {
-            // Scale to 720x1280 (Shorts), Crop if needed
             filterComplex.push(`[${i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[v${i}]`);
             videoOutputs.push(`[v${i}]`);
         });
 
-        // Concat Video
         filterComplex.push(`${videoOutputs.join('')}concat=n=${sceneAssets.length}:v=1:a=0[v_concat]`);
 
-        // Concat Audio (TTS)
-        // TTS inputs start at index `sceneAssets.length`
         const ttsStartIndex = sceneAssets.length;
         for(let i=0; i<sceneAssets.length; i++) {
             audioOutputs.push(`[${ttsStartIndex + i}:a]`);
         }
         filterComplex.push(`${audioOutputs.join('')}concat=n=${sceneAssets.length}:v=0:a=1[a_tts]`);
 
-        // Mix BGM
         const bgmIndex = ttsStartIndex + sceneAssets.length;
         if (bgmPath && fs.existsSync(bgmPath)) {
-            // Loop BGM and Mix
             filterComplex.push(`[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
             filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
             filterComplex.push(`[bgm_low][a_tts]amix=inputs=2:duration=first:dropout_transition=2[a_mixed]`);
@@ -444,10 +363,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             filterComplex.push(`[a_tts]anull[a_mixed]`);
         }
 
-        // Burn Subtitles
-        // Windows path issue with ASS filter: escape backslashes and colons
         const assPathEscaped = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-        // Point to fonts directory
         const fontsDir = path.join(process.cwd(), 'fonts');
         const fontsDirEscaped = fontsDir.replace(/\\/g, '/').replace(/:/g, '\\:');
         
@@ -481,7 +397,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       let finalPrompt = prompt;
       let imageInput = undefined;
 
-      // 1. Check for Direct Reference Image (Product-to-Video) - HIGHEST PRIORITY
       if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
           const match = referenceImage.match(/^data:(.+);base64,(.+)$/);
           if (match) {
@@ -492,9 +407,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
               console.log("Attached Product/Reference Image to Veo request.");
           }
       } 
-      // 2. Fallback to Character Profile Image (if no direct reference)
       else if (characterProfile) {
-          // Text Prompt Enhancement
           const charDetails = [
               characterProfile.name,
               characterProfile.gender,
@@ -506,7 +419,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           finalPrompt = `Character (${charDetails}). ${prompt}`;
           console.log(`Enhanced Prompt: ${finalPrompt}`);
 
-          // Image Input (Prioritize Front View for "Acting")
           const targetImage = characterProfile.images?.front || characterProfile.images?.threeView;
           if (targetImage && typeof targetImage === 'string' && targetImage.startsWith('data:image')) {
               const match = targetImage.match(/^data:(.+);base64,(.+)$/);
@@ -530,7 +442,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             });
 
             let attempts = 0;
-            while (!operation.done && attempts < 30) { // 2.5 minutes max
+            while (!operation.done && attempts < 30) { 
                 await new Promise(r => setTimeout(r, 5000));
                 operation = await this.ai.operations.getVideosOperation({ operation });
                 attempts++;
@@ -541,7 +453,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             }
 
             const videoUri = operation.response.generatedVideos[0].video.uri;
-            // Need to fetch with API Key
             const res = await fetch(`${videoUri}&key=${process.env.API_KEY}`);
             if (!res.ok) throw new Error("Failed to download Veo video");
             
@@ -551,12 +462,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
           } catch (e) {
               console.error("Veo Generation Error:", e);
-              // Fallback to placeholder below
           }
       }
 
-      // Fallback / Placeholder for Sora/Jimeng or Failed Veo
-      // Generate a video with text using ffmpeg
       return new Promise((resolve, reject) => {
           ffmpeg()
             .input('color=c=black:s=720x1280')
