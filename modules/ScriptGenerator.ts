@@ -8,10 +8,10 @@ export class ScriptGenerator {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
-  async generate(topic: string, language: 'en' | 'zh-TW' = 'zh-TW'): Promise<ScriptData> {
+  async generate(topic: string, language: 'en' | 'zh-TW' = 'zh-TW', referenceImage?: string): Promise<ScriptData> {
     const langName = language === 'en' ? 'English' : 'Traditional Chinese (Taiwan)';
     
-    const prompt = `
+    let promptText = `
       You are a professional short video scriptwriter.
       Topic: "${topic}"
       Target Audience: General public on YouTube Shorts / TikTok.
@@ -47,9 +47,40 @@ export class ScriptGenerator {
       }
     `;
 
+    if (referenceImage) {
+        promptText += `
+        \n\n**VISUAL REFERENCE PROVIDED**:
+        The user has provided a reference image (e.g., product shot, location).
+        Please analyze this image and ensure the script is highly relevant to it.
+        The "visual_cue" for at least the first scene (and others where appropriate) MUST describe this image or a similar shot to ensure visual consistency.
+        Focus on selling or highlighting the features visible in the image.
+        `;
+    }
+
+    const contents: any[] = [{ text: promptText }];
+    if (referenceImage) {
+        // Assume referenceImage is base64 string without data:image/xxx;base64, prefix or with it.
+        // Google GenAI expects raw base64 data.
+        let base64Data = referenceImage;
+        let mimeType = 'image/jpeg'; // Default
+        
+        const match = referenceImage.match(/^data:(.+);base64,(.+)$/);
+        if (match) {
+            mimeType = match[1];
+            base64Data = match[2];
+        }
+
+        contents.push({
+            inlineData: {
+                mimeType: mimeType,
+                data: base64Data
+            }
+        });
+    }
+
     const response = await this.ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: prompt,
+      contents: contents.length > 1 ? contents : promptText,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -88,6 +119,11 @@ export class ScriptGenerator {
     const text = response.text;
     if (!text) throw new Error("Failed to generate script");
     
-    return JSON.parse(text) as ScriptData;
+    const scriptData = JSON.parse(text) as ScriptData;
+    // Pass the reference image through to the result so it can be used in video generation
+    if (referenceImage) {
+        scriptData.referenceImage = referenceImage;
+    }
+    return scriptData;
   }
 }

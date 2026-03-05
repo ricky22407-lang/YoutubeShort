@@ -12,6 +12,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [referenceImage, setReferenceImage] = useState<string | null>(null);
 
   // 👉 完整補回：所有後端支援的強大參數
   const [config, setConfig] = useState({
@@ -55,6 +56,18 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     }
   };
 
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setReferenceImage(reader.result as string);
+        setLog("圖片已載入，將用於生成腳本與影片。");
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const generateScript = async () => {
     if (!customTopic && topicMode === 'custom') {
         setLog("請輸入主題！");
@@ -70,7 +83,8 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
         body: JSON.stringify({ 
             stage: 'generate_script', 
             channel,
-            topic: finalTopic 
+            topic: finalTopic,
+            referenceImage // Include reference image
         })
       });
       const data = await res.json();
@@ -139,7 +153,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
         body: JSON.stringify({ 
             stage: 'render_mpt', 
             channel: tempChannel, 
-            scriptData: script,
+            scriptData: { ...script, referenceImage: referenceImage || script.referenceImage },
             previousVideoUrl: videoUrl 
         })
       });
@@ -259,6 +273,34 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                     </div>
                 )}
               </div>
+
+              {/* Image Upload Section */}
+              <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
+                  <label className="text-xs font-bold text-zinc-400 uppercase block mb-3">參考圖片 (Image-to-Video)</label>
+                  <div className="flex items-center gap-4">
+                      <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white py-2 px-4 rounded-lg text-xs font-bold transition flex items-center gap-2 border border-zinc-700">
+                          <span>📷 上傳圖片</span>
+                          <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                      </label>
+                      
+                      {referenceImage ? (
+                          <div className="relative group w-16 h-16 shrink-0">
+                              <img src={referenceImage} alt="Preview" className="w-full h-full object-cover rounded-md border border-zinc-600" />
+                              <button 
+                                  onClick={() => setReferenceImage(null)}
+                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-md"
+                              >
+                                  ×
+                              </button>
+                          </div>
+                      ) : (
+                          <span className="text-[10px] text-zinc-500 italic">
+                              上傳產品/場景圖，AI 將根據圖片生成腳本與影片
+                          </span>
+                      )}
+                  </div>
+              </div>
+
               <button
                 onClick={generateScript}
                 disabled={loading || (topicMode === 'custom' && !customTopic && !channel.niche)}

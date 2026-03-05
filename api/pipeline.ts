@@ -87,7 +87,8 @@ export default async function handler(req: any, res: any) {
       case 'generate_script': {
         const generator = new ScriptGenerator(API_KEY);
         const topicToUse = req.body.topic || channel.niche;
-        const script = await generator.generate(topicToUse, channel.language || 'zh-TW');
+        const referenceImage = req.body.referenceImage; // New: Get image from request
+        const script = await generator.generate(topicToUse, channel.language || 'zh-TW', referenceImage);
         return res.status(200).json({ success: true, script });
       }
 

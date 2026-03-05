@@ -80,6 +80,7 @@ export interface ScriptData {
     description: string;
     hashtags: string[];
   };
+  referenceImage?: string; // Base64 encoded image for Image-to-Video
 }
 
 export interface ScriptScene {

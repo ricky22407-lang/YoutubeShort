@@ -91,50 +91,67 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + eventLines;
   }
 
-  private async fetchDynamicBgm(mood: string): Promise<string> {
-      const pixabayKey = process.env.PIXABAY_API_KEY;
-      if (!pixabayKey || !mood || mood === 'none') return '';
+  private async getFilesInDriveFolder(folderId: string): Promise<{ id: string; name: string }[]> {
+      const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
+      if (!apiKey) {
+          console.warn("GOOGLE_DRIVE_API_KEY is missing.");
+          return [];
+      }
 
+      const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name)&key=${apiKey}`;
+      
+      try {
+          const res = await fetch(url);
+          if (!res.ok) {
+              console.warn(`Google Drive API Error: ${res.status} ${res.statusText}`);
+              return [];
+          }
+          const data = await res.json();
+          return data.files || [];
+      } catch (error) {
+          console.error("Failed to fetch files from Google Drive:", error);
+          return [];
+      }
+  }
+
+  private async fetchDynamicBgm(mood: string): Promise<string> {
+      if (!mood || mood === 'none') return '';
+
+      // Placeholder Folder IDs - User needs to fill these in .env or config
+      // For now, we use empty strings as placeholders as requested.
       const moodMap: Record<string, string> = {
-          epic: 'epic cinematic',
-          relaxing: 'lofi chill',
-          funny: 'funny quirky',
-          suspense: 'suspense tension'
+          epic: 'FOLDER_ID_HERE', 
+          relaxing: 'FOLDER_ID_HERE',
+          funny: 'FOLDER_ID_HERE',
+          suspense: 'FOLDER_ID_HERE'
       };
 
-      let keyword = moodMap[mood];
+      let folderId = moodMap[mood];
       
       if (mood === 'random') {
           const keys = Object.keys(moodMap);
           const randomKey = keys[Math.floor(Math.random() * keys.length)];
-          keyword = moodMap[randomKey];
+          folderId = moodMap[randomKey];
       }
 
-      if (!keyword) return '';
+      if (!folderId || folderId === 'FOLDER_ID_HERE') {
+          console.warn(`No Google Drive Folder ID configured for mood: ${mood}`);
+          return '';
+      }
 
       try {
-          console.log(`Fetching BGM from Pixabay (Mood: ${mood}, Keyword: ${keyword})...`);
-          // Fetch top 20 popular tracks to ensure variety
-          const url = `https://pixabay.com/api/audio/?key=${pixabayKey}&q=${encodeURIComponent(keyword)}&order=popular&per_page=20`;
+          console.log(`Fetching BGM from Google Drive (Mood: ${mood}, Folder: ${folderId})...`);
+          const files = await this.getFilesInDriveFolder(folderId);
           
-          const res = await fetch(url);
-          if (!res.ok) {
-              console.warn(`Pixabay API Error: ${res.status} ${res.statusText}`);
-              return '';
-          }
-
-          const data = await res.json();
-          if (data.hits && data.hits.length > 0) {
-              // Randomly select one from the results
-              const randomHit = data.hits[Math.floor(Math.random() * data.hits.length)];
-              // 'audio' field contains the direct download link (usually CDN)
-              return randomHit.audio || ''; 
+          if (files.length > 0) {
+              const randomFile = files[Math.floor(Math.random() * files.length)];
+              console.log(`Selected BGM: ${randomFile.name} (${randomFile.id})`);
+              return `https://drive.google.com/uc?export=download&id=${randomFile.id}`;
           } else {
-              console.warn("Pixabay returned no hits for keyword:", keyword);
+              console.warn("No files found in Google Drive folder:", folderId);
           }
       } catch (error) {
-          console.error("Failed to fetch BGM from Pixabay:", error);
-          // Return empty string to proceed without BGM (fail-safe)
+          console.error("Failed to fetch BGM from Google Drive:", error);
           return '';
       }
       return '';
@@ -205,10 +222,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                     await this.downloadFile(videoUrls[0], videoPath);
                   } else {
                     console.warn(`No video found for "${scene.visual_cue}", falling back to AI generation (${videoEngine}).`);
-                    await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile);
+                    await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
                   }
               } else {
-                  await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile);
+                  await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
               }
           }
       }
@@ -454,14 +471,26 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     });
   }
 
-  private async generateAiVideo(prompt: string, engine: 'veo' | 'sora' | 'jimeng', outputPath: string, characterProfile?: any): Promise<void> {
+  private async generateAiVideo(prompt: string, engine: 'veo' | 'sora' | 'jimeng', outputPath: string, characterProfile?: any, referenceImage?: string): Promise<void> {
       console.log(`Generating AI Video with ${engine}: ${prompt}`);
       
       let finalPrompt = prompt;
       let imageInput = undefined;
 
-      if (characterProfile) {
-          // 1. Text Prompt Enhancement
+      // 1. Check for Direct Reference Image (Product-to-Video) - HIGHEST PRIORITY
+      if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
+          const match = referenceImage.match(/^data:(.+);base64,(.+)$/);
+          if (match) {
+              imageInput = {
+                  mimeType: match[1],
+                  imageBytes: match[2]
+              };
+              console.log("Attached Product/Reference Image to Veo request.");
+          }
+      } 
+      // 2. Fallback to Character Profile Image (if no direct reference)
+      else if (characterProfile) {
+          // Text Prompt Enhancement
           const charDetails = [
               characterProfile.name,
               characterProfile.gender,
@@ -473,8 +502,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           finalPrompt = `Character (${charDetails}). ${prompt}`;
           console.log(`Enhanced Prompt: ${finalPrompt}`);
 
-          // 2. Image Input (Prioritize Front View for "Acting")
-          // Only use image input if it's a valid Data URI
+          // Image Input (Prioritize Front View for "Acting")
           const targetImage = characterProfile.images?.front || characterProfile.images?.threeView;
           if (targetImage && typeof targetImage === 'string' && targetImage.startsWith('data:image')) {
               const match = targetImage.match(/^data:(.+);base64,(.+)$/);
