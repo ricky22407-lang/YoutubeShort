@@ -1,10 +1,7 @@
 {
   "functions": {
     "api/**/*": {
-      "includeFiles": [
-        "node_modules/@ffprobe-installer/linux-x64/**",
-        "node_modules/@ffmpeg-installer/linux-x64/**"
-      ]
+      "includeFiles": "node_modules/@ff*-installer/linux-x64/**"
     }
   },
   "rewrites": [
