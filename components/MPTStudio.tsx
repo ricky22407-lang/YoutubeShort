@@ -22,7 +22,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     voiceId: 'zh-TW-HsiaoChenNeural', 
     videoEngine: 'veo' as 'veo' | 'sora' | 'jimeng' | 'heygen',
     heygenAvatarId: '', // HeyGen 專用的數位人 ID
-    useStockFootage: true
+    useStockFootage: true,
+    fontName: 'NotoSansTC-Bold.ttf',
+    bgmMood: 'random' as 'random' | 'epic' | 'relaxing' | 'funny' | 'suspense' | 'none'
   });
 
   const [uploadTargets, setUploadTargets] = useState<string[]>([]);
@@ -356,6 +358,34 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                         />
                     ))}
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1 font-bold">字幕字體</label>
+                <select value={config.fontName} onChange={(e) => setConfig({...config, fontName: e.target.value})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
+                  <optgroup label="中文 (Chinese)">
+                    <option value="NotoSansTC-Bold.ttf">Noto Sans TC (黑體)</option>
+                    <option value="NotoSerifTC-Bold.ttf">Noto Serif TC (宋體)</option>
+                    <option value="ZCOOLKuaiLe-Regular.ttf">快樂體 (可愛)</option>
+                  </optgroup>
+                  <optgroup label="英文 (English)">
+                    <option value="Roboto-Bold.ttf">Roboto (標準)</option>
+                    <option value="Anton-Regular.ttf">Anton (衝擊感)</option>
+                    <option value="Bangers-Regular.ttf">Bangers (漫畫風)</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1 font-bold">配樂風格 (BGM)</label>
+                <select value={config.bgmMood} onChange={(e) => setConfig({...config, bgmMood: e.target.value as any})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
+                  <option value="random">🎲 隨機 (Random)</option>
+                  <option value="epic">⚔️ 史詩 (Epic)</option>
+                  <option value="relaxing">☕ 輕鬆 (Relaxing)</option>
+                  <option value="funny">🤡 搞笑 (Funny)</option>
+                  <option value="suspense">🕵️ 懸疑 (Suspense)</option>
+                  <option value="none">🔇 無配樂 (No BGM)</option>
+                </select>
               </div>
             </div>
           </div>

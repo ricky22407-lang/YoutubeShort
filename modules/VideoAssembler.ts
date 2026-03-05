@@ -51,7 +51,18 @@ export class VideoAssembler {
     await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
   }
 
-  private generateAssSubtitles(events: { start: number; end: number; text: string }[], fontSize: number, color: string): string {
+  private generateAssSubtitles(events: { start: number; end: number; text: string }[], fontSize: number, color: string, fontName: string): string {
+    // Map filename to Font Family Name
+    const fontMap: Record<string, string> = {
+        'NotoSansTC-Bold.ttf': 'Noto Sans TC',
+        'NotoSerifTC-Bold.ttf': 'Noto Serif TC',
+        'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe',
+        'Roboto-Bold.ttf': 'Roboto',
+        'Anton-Regular.ttf': 'Anton',
+        'Bangers-Regular.ttf': 'Bangers'
+    };
+    const fontFamily = fontMap[fontName] || 'Arial';
+
     const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 720
@@ -59,7 +70,7 @@ PlayResY: 1280
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,${fontSize},&H00${color.replace('#', '')},&H000000FF,&H00000000,&H80000000,-1,0,1,2,0,2,10,10,100,1
+Style: Default,${fontFamily},${fontSize},&H00${color.replace('#', '')},&H000000FF,&H00000000,&H80000000,-1,0,1,2,0,2,10,10,100,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -80,7 +91,39 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + eventLines;
   }
 
-  async assemble(script: ScriptData, outputFilename: string, config?: { bgmVolume?: number; fontSize?: number; subtitleColor?: string; useStockFootage?: boolean; videoEngine?: 'veo' | 'sora' | 'jimeng' | 'heygen'; ttsEngine?: 'edge' | 'elevenlabs'; elevenLabsVoiceId?: string; voiceId?: string; heygenAvatarId?: string }, characterProfile?: any): Promise<string> {
+  private getBgmUrl(mood: string): string {
+      const bgmLibrary: Record<string, string[]> = {
+          epic: [
+              'https://commondatastorage.googleapis.com/codeskulptor-demos/riceracer_assets/music/race1.ogg',
+              'https://commondatastorage.googleapis.com/codeskulptor-assets/sounddogs/thrust.mp3'
+          ],
+          relaxing: [
+              'https://commondatastorage.googleapis.com/codeskulptor-demos/pyman_assets/eatedible.ogg',
+              'https://commondatastorage.googleapis.com/codeskulptor-demos/pyman_assets/intromusic.ogg'
+          ],
+          funny: [
+              'https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg',
+              'https://commondatastorage.googleapis.com/codeskulptor-demos/pyman_assets/ateapill.ogg'
+          ],
+          suspense: [
+              'https://commondatastorage.googleapis.com/codeskulptor-assets/sounddogs/missile.mp3',
+              'https://commondatastorage.googleapis.com/codeskulptor-assets/sounddogs/soundtrack.mp3'
+          ]
+      };
+
+      if (mood === 'random') {
+          const keys = Object.keys(bgmLibrary);
+          const randomKey = keys[Math.floor(Math.random() * keys.length)];
+          const songs = bgmLibrary[randomKey];
+          return songs[Math.floor(Math.random() * songs.length)];
+      }
+
+      const songs = bgmLibrary[mood] || [];
+      if (songs.length === 0) return '';
+      return songs[Math.floor(Math.random() * songs.length)];
+  }
+
+  async assemble(script: ScriptData, outputFilename: string, config?: { bgmVolume?: number; fontSize?: number; subtitleColor?: string; useStockFootage?: boolean; videoEngine?: 'veo' | 'sora' | 'jimeng' | 'heygen'; ttsEngine?: 'edge' | 'elevenlabs'; elevenLabsVoiceId?: string; voiceId?: string; heygenAvatarId?: string; fontName?: string; bgmMood?: string }, characterProfile?: any): Promise<string> {
     const sceneAssets: { video: string; audio: string; duration: number; text: string }[] = [];
     let totalDuration = 0;
     const bgmVolume = config?.bgmVolume ?? 0.1;
@@ -89,6 +132,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const videoEngine = config?.videoEngine ?? 'veo';
     const subtitleColor = config?.subtitleColor || '#FFFF00';
     const ttsEngine = config?.ttsEngine || 'edge';
+    const fontName = config?.fontName || 'NotoSansTC-Bold.ttf';
+    const bgmMood = config?.bgmMood || 'none';
     
     // Determine Voice ID:
     // If ElevenLabs, use elevenLabsVoiceId or fallback to voiceId (which might be generic)
@@ -254,6 +299,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     const primaryColor = config?.subtitleColor ? hexToASS(config.subtitleColor) : '&H00FFFF'; // Yellow
     const secondaryColor = '&H00FFFFFF'; // White
 
+    // Map filename to Font Family Name
+    const fontMap: Record<string, string> = {
+        'NotoSansTC-Bold.ttf': 'Noto Sans TC',
+        'NotoSerifTC-Bold.ttf': 'Noto Serif TC',
+        'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe',
+        'Roboto-Bold.ttf': 'Roboto',
+        'Anton-Regular.ttf': 'Anton',
+        'Bangers-Regular.ttf': 'Bangers'
+    };
+    const fontFamily = fontMap[fontName] || 'Arial';
+
     const assHeader = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -261,7 +317,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,${fontSize},${primaryColor},${secondaryColor},&H000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,350,1
+Style: Default,${fontFamily},${fontSize},${primaryColor},${secondaryColor},&H000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,350,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -277,6 +333,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // Concatenate Audio first
     const fullTtsPath = path.join(this.tempDir, 'full_tts.mp3');
     
+    // Download BGM if needed
+    let bgmPath = '';
+    if (bgmMood && bgmMood !== 'none') {
+        const bgmUrl = this.getBgmUrl(bgmMood);
+        if (bgmUrl) {
+            bgmPath = path.join(this.tempDir, `bgm_${Date.now()}.mp3`);
+            try {
+                console.log(`Downloading BGM (${bgmMood}): ${bgmUrl}`);
+                await this.downloadFile(bgmUrl, bgmPath);
+            } catch (e) {
+                console.error("Failed to download BGM, proceeding without it.", e);
+                bgmPath = '';
+            }
+        }
+    } else {
+        // Fallback to local sentinel.mp3 if specifically requested or legacy logic?
+        // User asked to replace local sentinel with cloud fetching.
+        // So if bgmMood is 'none', we use no BGM.
+        // If bgmMood is undefined, we might default to none or random?
+        // The config default is 'none' in my code above if not provided.
+    }
+
     // We will build a complex filter command
     return new Promise((resolve, reject) => {
         const cmd = ffmpeg();
@@ -291,9 +369,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             cmd.input(a.audio);
         });
 
-        // BGM Input (Assume sentinel.mp3 exists in assets or root)
-        const bgmPath = path.resolve('sentinel.mp3'); 
-        if (fs.existsSync(bgmPath)) {
+        // BGM Input
+        if (bgmPath && fs.existsSync(bgmPath)) {
             cmd.input(bgmPath);
         }
 
@@ -322,7 +399,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
         // Mix BGM
         const bgmIndex = ttsStartIndex + sceneAssets.length;
-        if (fs.existsSync(bgmPath)) {
+        if (bgmPath && fs.existsSync(bgmPath)) {
             // Loop BGM and Mix
             filterComplex.push(`[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
             filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
@@ -334,7 +411,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         // Burn Subtitles
         // Windows path issue with ASS filter: escape backslashes and colons
         const assPathEscaped = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-        filterComplex.push(`[v_concat]ass='${assPathEscaped}'[v_final]`);
+        // Point to fonts directory
+        const fontsDir = path.join(process.cwd(), 'fonts');
+        const fontsDirEscaped = fontsDir.replace(/\\/g, '/').replace(/:/g, '\\:');
+        
+        filterComplex.push(`[v_concat]ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_final]`);
 
         cmd.complexFilter(filterComplex)
            .outputOptions([

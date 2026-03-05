@@ -92,11 +92,16 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'render_mpt': {
-        if (!PEXELS_API_KEY) {
+        const useStockFootage = channel.mptConfig?.useStockFootage ?? true;
+        
+        if (useStockFootage && !PEXELS_API_KEY) {
            return res.status(200).json({ success: false, error: 'PEXELS_API_KEY Missing' });
         }
         
-        const assembler = new VideoAssembler(API_KEY, PEXELS_API_KEY);
+        // 如果不使用 Stock Footage，我們可以傳入空字串或假 Key，因為 VideoAssembler 內部會判斷 useStockFootage
+        const effectivePexelsKey = useStockFootage ? PEXELS_API_KEY! : 'DISABLED';
+        
+        const assembler = new VideoAssembler(API_KEY, effectivePexelsKey);
         const outputFilename = path.join(os.tmpdir(), `mpt_${Date.now()}.mp4`);
         
         try {
