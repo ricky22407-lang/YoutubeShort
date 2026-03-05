@@ -3,6 +3,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import util from 'util';
+// @ts-ignore (避免 Vercel 抱怨找不到型別宣告檔)
+import { EdgeTTS } from 'node-edge-tts'; 
 
 const execPromise = util.promisify(exec);
 
@@ -11,7 +13,6 @@ export class TTSService {
   private elevenLabsApiKey: string | undefined;
 
   constructor() {
-    // 👉 修復：改用 Vercel 允許寫入的 os.tmpdir()
     this.outputDir = path.join(os.tmpdir(), 'tts_temp');
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
@@ -56,21 +57,46 @@ export class TTSService {
             return null; 
 
         } else {
-            // Edge TTS 邏輯
-            const safeText = text.replace(/"/g, '\\"');
-            const vttPath = outputPath.replace('.mp3', '.vtt');
-            const command = `npx edge-tts --voice ${voice} --text "${safeText}" --write-media "${outputPath}" --write-subtitles "${vttPath}"`;
+            // 👉 正確的 Node.js Edge TTS 原生寫法
+            // 自動從 voice 代碼中提取語言 (例如從 zh-TW-HsiaoChenNeural 提取 zh-TW)
+            const langCode = voice.split('-').slice(0, 2).join('-');
             
-            await execPromise(command);
+            const tts = new EdgeTTS({
+                voice: voice,
+                lang: langCode,
+                outputFormat: 'audio-24khz-96kbitrate-mono-mp3',
+                saveSubtitles: true
+            });
             
-            // 👉 強力防呆：如果檔案不存在，或是檔案大小為 0，就立刻報錯攔截，不讓它傳給後面的 FFmpeg
+            await tts.ttsPromise(text, outputPath);
+            
+            // 防呆檢測：確認聲音檔案真的有生出來
             if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
                 throw new Error(`TTS 語音生成失敗或產出了空白檔案 (測試語音: ${voice})`);
             }
 
-            if (fs.existsSync(vttPath)) {
+            // node-edge-tts 預設會產生 .json 字幕檔，我們要把它轉成 .vtt 讓系統看得懂
+            const jsonPath = outputPath.replace('.mp3', '.json');
+            const vttPath = outputPath.replace('.mp3', '.vtt');
+            
+            if (fs.existsSync(jsonPath)) {
+                const subData = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+                let vttContent = "WEBVTT\n\n";
+                
+                // 將毫秒轉換為 VTT 時間格式 (HH:mm:ss.SSS)
+                const formatTime = (ms: number) => {
+                    const date = new Date(ms);
+                    return date.toISOString().substr(11, 12);
+                };
+
+                subData.forEach((sub: any) => {
+                    vttContent += `${formatTime(sub.start)} --> ${formatTime(sub.end)}\n${sub.part}\n\n`;
+                });
+                
+                fs.writeFileSync(vttPath, vttContent);
                 return vttPath;
             }
+
             return null;
         }
     } catch (error: any) {
