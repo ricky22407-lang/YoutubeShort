@@ -13,12 +13,15 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [log, setLog] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
+  // 👉 完整補回：所有後端支援的強大參數
   const [config, setConfig] = useState({
     bgmVolume: 0.1,
     fontSize: 80,
     subtitleColor: '#FFFF00',
-    voiceId: 'Puck',
+    ttsEngine: 'edge' as 'edge' | 'elevenlabs',
+    voiceId: 'zh-TW-HsiaoChenNeural', 
     videoEngine: 'veo' as 'veo' | 'sora' | 'jimeng' | 'heygen',
+    heygenAvatarId: '', // HeyGen 專用的數位人 ID
     useStockFootage: true
   });
 
@@ -111,6 +114,13 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
   const renderVideo = async () => {
     if (!script) return;
+    
+    // 防呆：如果選了 HeyGen 卻沒填 ID
+    if (config.videoEngine === 'heygen' && !config.heygenAvatarId) {
+        setLog("⚠️ 錯誤：您選擇了 HeyGen 引擎，請填寫 Avatar ID！");
+        return;
+    }
+
     setLoading(true);
     setLog(`正在渲染影片 (模式: ${config.useStockFootage ? '混合模式 (素材庫 + AI)' : config.videoEngine})...`);
     
@@ -128,7 +138,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             stage: 'render_mpt', 
             channel: tempChannel, 
             scriptData: script,
-            previousVideoUrl: videoUrl // 這裡把舊的影片網址傳給後端刪除
+            previousVideoUrl: videoUrl 
         })
       });
       const data = await res.json();
@@ -173,7 +183,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       }
   };
 
-  // 【新功能】真正能將影片下載到電腦的處理器
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!videoUrl) return;
@@ -185,7 +194,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
-        a.download = `youtube_short_${Date.now()}.mp4`; // 下載的預設檔名
+        a.download = `youtube_short_${Date.now()}.mp4`; 
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -259,19 +268,73 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 space-y-4">
               <h2 className="text-xl font-semibold">2. 架構 (配置)</h2>
+              
               <div className="flex bg-black rounded-lg p-1 border border-zinc-800">
                   <button onClick={() => setConfig({...config, useStockFootage: true})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.useStockFootage ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>混合模式</button>
                   <button onClick={() => setConfig({...config, useStockFootage: false})} className={`flex-1 py-2 text-xs font-bold rounded-md ${!config.useStockFootage ? 'bg-purple-900/50 text-purple-400' : 'text-zinc-500'}`}>純 AI</button>
               </div>
+
+              {/* 👉 影像引擎選擇 */}
               <div>
-                <label className="text-xs text-purple-400 block mb-1 font-bold">引擎</label>
-                <select value={config.videoEngine} onChange={(e) => setConfig({...config, videoEngine: e.target.value as any})} className="w-full bg-black border border-purple-500/30 rounded-lg p-2 text-sm text-white">
+                <label className="text-xs text-purple-400 block mb-1 font-bold">影像生成引擎</label>
+                <select value={config.videoEngine} onChange={(e) => setConfig({...config, videoEngine: e.target.value as any})} className="w-full bg-black border border-purple-500/30 rounded-lg p-2 text-sm text-white focus:border-purple-500 outline-none">
                   <option value="veo">Google Veo 3.1</option>
                   <option value="sora">OpenAI Sora 2.0</option>
                   <option value="jimeng">Jimeng</option>
-                  <option value="heygen">HeyGen</option>
+                  <option value="heygen">HeyGen (數位人)</option>
                 </select>
+                
+                {/* 👉 HeyGen 專屬動態輸入框 */}
+                {config.videoEngine === 'heygen' && (
+                   <div className="animate-fade-in mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg">
+                     <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar ID</label>
+                     <input 
+                        type="text" 
+                        value={config.heygenAvatarId} 
+                        onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} 
+                        placeholder="請輸入數位人代碼..." 
+                        className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" 
+                     />
+                   </div>
+                )}
               </div>
+
+              <div className="border-t border-zinc-800 my-4 pt-4"></div>
+
+              {/* 👉 配音引擎與聲線選擇 */}
+              <div>
+                  <label className="text-xs text-zinc-400 block mb-1 font-bold">配音引擎</label>
+                  <div className="flex bg-black rounded-lg p-1 border border-zinc-800 mb-2">
+                     <button onClick={() => setConfig({...config, ttsEngine: 'edge', voiceId: 'zh-TW-HsiaoChenNeural'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'edge' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>Edge (免費)</button>
+                     <button onClick={() => setConfig({...config, ttsEngine: 'elevenlabs', voiceId: 'Puck'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'elevenlabs' ? 'bg-purple-900/50 text-purple-400' : 'text-zinc-500'}`}>ElevenLabs</button>
+                  </div>
+
+                  <label className="text-xs text-zinc-400 block mb-1">
+                      {config.ttsEngine === 'elevenlabs' ? 'Voice ID (請輸入)' : '語音聲線 (請選擇)'}
+                  </label>
+                  {config.ttsEngine === 'elevenlabs' ? (
+                      <input 
+                          type="text" 
+                          value={config.voiceId} 
+                          onChange={e => setConfig({...config, voiceId: e.target.value})} 
+                          placeholder="例如: Puck 或 21m00Tcm4..." 
+                          className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none" 
+                      />
+                  ) : (
+                      <select 
+                          value={config.voiceId} 
+                          onChange={e => setConfig({...config, voiceId: e.target.value})} 
+                          className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none"
+                      >
+                          <option value="zh-TW-HsiaoChenNeural">曉辰 (台灣女聲)</option>
+                          <option value="zh-TW-YunJheNeural">允哲 (台灣男聲)</option>
+                          <option value="zh-TW-HsiaoYuNeural">曉雨 (台灣女聲)</option>
+                      </select>
+                  )}
+              </div>
+
+              <div className="border-t border-zinc-800 my-4 pt-4"></div>
+
               <div>
                 <label className="text-xs text-zinc-400 block mb-1">背景音樂音量 ({config.bgmVolume})</label>
                 <input type="range" min="0" max="1" step="0.1" value={config.bgmVolume} onChange={(e) => setConfig({...config, bgmVolume: parseFloat(e.target.value)})} className="w-full" />
@@ -279,6 +342,20 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div>
                 <label className="text-xs text-zinc-400 block mb-1">字體大小 ({config.fontSize}px)</label>
                 <input type="range" min="12" max="120" step="2" value={config.fontSize} onChange={(e) => setConfig({...config, fontSize: parseInt(e.target.value)})} className="w-full" />
+              </div>
+              
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">字幕顏色</label>
+                <div className="flex gap-2">
+                    {['#FFFF00', '#FFFFFF', '#00FFFF', '#FF00FF', '#00FF00'].map(color => (
+                        <button 
+                            key={color}
+                            onClick={() => setConfig({...config, subtitleColor: color})}
+                            className={`w-6 h-6 rounded-full border-2 ${config.subtitleColor === color ? 'border-white' : 'border-transparent'}`}
+                            style={{ backgroundColor: color }}
+                        />
+                    ))}
+                </div>
               </div>
             </div>
           </div>
@@ -314,15 +391,12 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               {videoUrl ? (
                 <div className="w-full aspect-[9/16] bg-black rounded-lg overflow-hidden relative group">
                   <video src={videoUrl} controls className="w-full h-full object-contain" autoPlay loop />
-                  
-                  {/* 【修改過的下載按鈕】 */}
                   <button 
                     onClick={handleDownload} 
                     className="absolute bottom-4 right-4 bg-white text-black px-4 py-2 rounded-full text-sm font-bold opacity-0 group-hover:opacity-100 transition z-10 shadow-lg"
                   >
                     ⬇️ 下載影片
                   </button>
-                  
                 </div>
               ) : (
                 <div className="text-center text-zinc-500">
