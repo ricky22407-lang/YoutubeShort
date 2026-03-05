@@ -1,4 +1,4 @@
-import { TTSService } from '../services/ttsService.js';
+import { TTSService } from './TTSService.js';
 import { HeyGenService } from './HeyGenService.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
