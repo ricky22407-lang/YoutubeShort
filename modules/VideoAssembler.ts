@@ -91,36 +91,53 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return header + eventLines;
   }
 
-  private getBgmUrl(mood: string): string {
-      const bgmLibrary: Record<string, string[]> = {
-          epic: [
-              'https://commondatastorage.googleapis.com/codeskulptor-demos/riceracer_assets/music/race1.ogg',
-              'https://commondatastorage.googleapis.com/codeskulptor-assets/sounddogs/thrust.mp3'
-          ],
-          relaxing: [
-              'https://commondatastorage.googleapis.com/codeskulptor-demos/pyman_assets/eatedible.ogg',
-              'https://commondatastorage.googleapis.com/codeskulptor-demos/pyman_assets/intromusic.ogg'
-          ],
-          funny: [
-              'https://commondatastorage.googleapis.com/codeskulptor-assets/Epoq-Lepidoptera.ogg',
-              'https://commondatastorage.googleapis.com/codeskulptor-demos/pyman_assets/ateapill.ogg'
-          ],
-          suspense: [
-              'https://commondatastorage.googleapis.com/codeskulptor-assets/sounddogs/missile.mp3',
-              'https://commondatastorage.googleapis.com/codeskulptor-assets/sounddogs/soundtrack.mp3'
-          ]
+  private async fetchDynamicBgm(mood: string): Promise<string> {
+      const pixabayKey = process.env.PIXABAY_API_KEY;
+      if (!pixabayKey || !mood || mood === 'none') return '';
+
+      const moodMap: Record<string, string> = {
+          epic: 'epic cinematic',
+          relaxing: 'lofi chill',
+          funny: 'funny quirky',
+          suspense: 'suspense tension'
       };
 
+      let keyword = moodMap[mood];
+      
       if (mood === 'random') {
-          const keys = Object.keys(bgmLibrary);
+          const keys = Object.keys(moodMap);
           const randomKey = keys[Math.floor(Math.random() * keys.length)];
-          const songs = bgmLibrary[randomKey];
-          return songs[Math.floor(Math.random() * songs.length)];
+          keyword = moodMap[randomKey];
       }
 
-      const songs = bgmLibrary[mood] || [];
-      if (songs.length === 0) return '';
-      return songs[Math.floor(Math.random() * songs.length)];
+      if (!keyword) return '';
+
+      try {
+          console.log(`Fetching BGM from Pixabay (Mood: ${mood}, Keyword: ${keyword})...`);
+          // Fetch top 20 popular tracks to ensure variety
+          const url = `https://pixabay.com/api/audio/?key=${pixabayKey}&q=${encodeURIComponent(keyword)}&order=popular&per_page=20`;
+          
+          const res = await fetch(url);
+          if (!res.ok) {
+              console.warn(`Pixabay API Error: ${res.status} ${res.statusText}`);
+              return '';
+          }
+
+          const data = await res.json();
+          if (data.hits && data.hits.length > 0) {
+              // Randomly select one from the results
+              const randomHit = data.hits[Math.floor(Math.random() * data.hits.length)];
+              // 'audio' field contains the direct download link (usually CDN)
+              return randomHit.audio || ''; 
+          } else {
+              console.warn("Pixabay returned no hits for keyword:", keyword);
+          }
+      } catch (error) {
+          console.error("Failed to fetch BGM from Pixabay:", error);
+          // Return empty string to proceed without BGM (fail-safe)
+          return '';
+      }
+      return '';
   }
 
   async assemble(script: ScriptData, outputFilename: string, config?: { bgmVolume?: number; fontSize?: number; subtitleColor?: string; useStockFootage?: boolean; videoEngine?: 'veo' | 'sora' | 'jimeng' | 'heygen'; ttsEngine?: 'edge' | 'elevenlabs'; elevenLabsVoiceId?: string; voiceId?: string; heygenAvatarId?: string; fontName?: string; bgmMood?: string }, characterProfile?: any): Promise<string> {
@@ -336,7 +353,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // Download BGM if needed
     let bgmPath = '';
     if (bgmMood && bgmMood !== 'none') {
-        const bgmUrl = this.getBgmUrl(bgmMood);
+        // Use the new dynamic fetcher
+        const bgmUrl = await this.fetchDynamicBgm(bgmMood);
+        
         if (bgmUrl) {
             bgmPath = path.join(this.tempDir, `bgm_${Date.now()}.mp3`);
             try {
@@ -346,13 +365,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 console.error("Failed to download BGM, proceeding without it.", e);
                 bgmPath = '';
             }
+        } else {
+             console.log("No BGM URL returned (or API key missing), proceeding without BGM.");
         }
-    } else {
-        // Fallback to local sentinel.mp3 if specifically requested or legacy logic?
-        // User asked to replace local sentinel with cloud fetching.
-        // So if bgmMood is 'none', we use no BGM.
-        // If bgmMood is undefined, we might default to none or random?
-        // The config default is 'none' in my code above if not provided.
     }
 
     // We will build a complex filter command

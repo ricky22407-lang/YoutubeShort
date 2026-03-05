@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/**/*": {
-      "includeFiles": "node_modules/@ff*-installer/linux-x64/**"
+      "includeFiles": "{node_modules/@ff*-installer/linux-x64/**,fonts/**}"
     }
   },
   "rewrites": [
