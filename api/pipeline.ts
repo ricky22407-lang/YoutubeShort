@@ -37,9 +37,18 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 export default async function handler(req: any, res: any) {
+  // 👉 核心修復：處理瀏覽器的 CORS 預檢請求，徹底解決 405 Error
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+    return res.status(200).end();
+  }
+
   try {
     if (req.method !== 'POST') {
-      return res.status(405).json({ success: false, error: 'Method Not Allowed' });
+      return res.status(405).json({ success: false, error: `Method ${req.method} Not Allowed` });
     }
     
     const API_KEY = process.env.API_KEY;
@@ -49,7 +58,6 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: false, error: 'System API_KEY Missing' });
     }
 
-    // 這裡我們多接收了前端傳來的 previousVideoUrl (舊影片網址)
     const { stage, channel, metadata, scriptData, previousVideoUrl } = req.body;
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
@@ -69,7 +77,7 @@ export default async function handler(req: any, res: any) {
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: 'gemini-3.1-flash-lite-preview', // 確保使用最新輕量級模型以增加速度
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -87,7 +95,7 @@ export default async function handler(req: any, res: any) {
       case 'generate_script': {
         const generator = new ScriptGenerator(API_KEY);
         const topicToUse = req.body.topic || channel.niche;
-        const referenceImage = req.body.referenceImage; // New: Get image from request
+        const referenceImage = req.body.referenceImage; 
         const script = await generator.generate(topicToUse, channel.language || 'zh-TW', referenceImage);
         return res.status(200).json({ success: true, script });
       }
@@ -99,14 +107,11 @@ export default async function handler(req: any, res: any) {
            return res.status(200).json({ success: false, error: 'PEXELS_API_KEY Missing' });
         }
         
-        // 如果不使用 Stock Footage，我們可以傳入空字串或假 Key，因為 VideoAssembler 內部會判斷 useStockFootage
         const effectivePexelsKey = useStockFootage ? PEXELS_API_KEY! : 'DISABLED';
-        
         const assembler = new VideoAssembler(API_KEY, effectivePexelsKey);
         const outputFilename = path.join(os.tmpdir(), `mpt_${Date.now()}.mp4`);
         
         try {
-            // 【新功能】如果前端有傳來舊影片的網址，我們就在這裡把它從 Vercel Blob 刪除
             if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
                 try {
                     await del(previousVideoUrl);
@@ -116,16 +121,13 @@ export default async function handler(req: any, res: any) {
                 }
             }
 
-            // 合成新影片
             await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile);
             
-            // 讀取檔案並上傳到 Vercel Blob
             const videoBuffer = fs.readFileSync(outputFilename);
             const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, {
                 access: 'public',
             });
 
-            // 回傳最新的影片網址給前端
             return res.status(200).json({ success: true, videoUrl: blob.url });
         } catch (e: any) {
             console.error("Assembly Failed:", e);
@@ -184,7 +186,7 @@ export default async function handler(req: any, res: any) {
         };
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: 'gemini-3.1-pro-preview',
             ...analysisParams
         });
         
@@ -222,7 +224,7 @@ export default async function handler(req: any, res: any) {
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3-flash-preview',
+            model: 'gemini-3.1-pro-preview',
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
@@ -252,11 +254,6 @@ export default async function handler(req: any, res: any) {
                 const refreshed = await refreshAccessToken(channel.auth.refresh_token);
                 currentAccessToken = refreshed.access_token;
              } catch(e) {}
-        }
-
-        const videoEngine = channel.mptConfig?.videoEngine || 'veo';
-        if (videoEngine === 'jimeng') {
-             throw new Error("Jimeng Video Generation not yet implemented. Please use Veo.");
         }
 
         let operation = await ai.models.generateVideos({

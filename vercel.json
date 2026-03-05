@@ -1,10 +1,7 @@
 {
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/pipeline" }
-  ],
   "functions": {
     "api/**/*.ts": {
-      "includeFiles": "{node_modules/@ffmpeg-installer/linux-x64/ffmpeg,node_modules/@ffmpeg-installer/linux-x64/package.json,node_modules/@ffprobe-installer/linux-x64/ffprobe,node_modules/@ffprobe-installer/linux-x64/package.json,fonts/*.ttf}"
+      "includeFiles": "{node_modules/@ffmpeg-installer/linux-x64/**,node_modules/@ffprobe-installer/linux-x64/**,fonts/**}"
     }
   }
 }
