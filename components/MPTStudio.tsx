@@ -205,16 +205,36 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   <option value="heygen">HeyGen (數位人)</option>
                 </select>
                 
+                {/* 👉 HeyGen 專屬動態輸入框與畫面控制 */}
                 {config.videoEngine === 'heygen' && (
-                   <div className="animate-fade-in mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg space-y-3">
+                   <div className="animate-fade-in mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg space-y-4">
+                     {/* 群組盲抽輸入框 */}
                      <div>
-                         <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar ID</label>
-                         <input type="text" value={config.heygenAvatarId} onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} placeholder="請輸入數位人代碼..." className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" />
+                         <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar / Group ID (支援群組盲抽)</label>
+                         <input 
+                            type="text" 
+                            value={config.heygenAvatarId} 
+                            onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} 
+                            placeholder="輸入 Group ID 或 Avatar ID..." 
+                            className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" 
+                         />
+                         <p className="text-[10px] text-indigo-300 mt-1">
+                            ✨ 系統超智慧：輸入 Group ID 會自動列出底下所有 Looks 進行隨機盲抽換裝！也可以單純輸入單一 ID 喔。
+                         </p>
                      </div>
-                     {/* 👉 畫面縮放控制區塊 */}
+
+                     {/* 畫面縮放控制區塊 (解決白邊) */}
                      <div>
                          <label className="text-xs text-indigo-400 block mb-1 font-bold">畫面放大比例 (去白邊): {config.avatarScale.toFixed(1)}x</label>
-                         <input type="range" min="1" max="2.5" step="0.1" value={config.avatarScale} onChange={e => setConfig({...config, avatarScale: parseFloat(e.target.value)})} className="w-full" />
+                         <input 
+                            type="range" 
+                            min="1" 
+                            max="2.5" 
+                            step="0.1" 
+                            value={config.avatarScale} 
+                            onChange={e => setConfig({...config, avatarScale: parseFloat(e.target.value)})} 
+                            className="w-full" 
+                         />
                          <p className="text-[10px] text-indigo-300 mt-1">若橫式影片上下有白邊，請調大數值放大畫面 (建議 1.5 ~ 1.8)</p>
                      </div>
                    </div>
