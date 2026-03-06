@@ -80,7 +80,7 @@ export default async function handler(req: any, res: any) {
         // 🚀 智慧偵測：判斷輸入的是多重 ID 還是 Group ID
         if (heygenIdInput.includes(',')) {
             // 情境 1：手動逗號隔開的多個 ID
-            finalAvatarIds = heygenIdInput.split(',').map((id: string) => id.trim()).filter(id => id.length > 0);
+            finalAvatarIds = heygenIdInput.split(',').map((id: string) => id.trim()).filter((id: string) => id.length > 0);
             console.log(`[HeyGen] 偵測到手動多重 ID，共 ${finalAvatarIds.length} 個`);
         } else {
             // 情境 2：去問問 HeyGen 這是不是一個 Group ID？
@@ -102,11 +102,6 @@ export default async function handler(req: any, res: any) {
         const scale = channel.mptConfig?.avatarScale || 1.0;
         const videoId = await heyGen.submitVideoTask(fullText, selectedAvatarId, voiceId, scale);
         
-        return res.status(200).json({ success: true, videoId });
-      }
-        // 👇 接收前端傳來的放大比例
-        const scale = channel.mptConfig?.avatarScale || 1.0;
-        const videoId = await heyGen.submitVideoTask(fullText, channel.mptConfig?.heygenAvatarId, voiceId, scale);
         return res.status(200).json({ success: true, videoId });
       }
 
@@ -172,7 +167,6 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'analyze': {
-        // ... 原本代碼不變，為了不超過版面我用精簡寫法，請放心直接覆蓋
         return res.status(400).json({ success: false, error: '分析功能在此版本暫時隱藏' });
       }
 
