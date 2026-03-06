@@ -97,7 +97,11 @@ export class VideoAssembler {
       return '';
   }
 
-  async assemble(script: ScriptData, outputFilename: string, config?: any, characterProfile?: any): Promise<string> {
+  // 👇 正確修復的單一 assemble 函式
+  async assemble(script: ScriptData, outputFilename: string, config?: any, characterProfile?: any, preGeneratedHeygenUrl?: string): Promise<string> {
+    const sceneAssets: { video: string; audio: string; duration: number; text: string }[] = [];
+    let totalDuration = 0;
+    
     const bgmVolume = config?.bgmVolume ?? 0.1;
     const fontSize = config?.fontSize ?? 80;
     const useStockFootage = config?.useStockFootage ?? true;
@@ -111,20 +115,6 @@ export class VideoAssembler {
     if (ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId) {
         voiceId = config.elevenLabsVoiceId;
     }
-
-    const isSingleVideoMode = (videoEngine === 'heygen' && config?.heygenAvatarId);
-    let singleVideoPath = '';
-    let totalHeygenDuration = 0;
-    const sceneAssets: { video: string; audio: string; duration: number; text: string }[] = [];
-
-    console.log(`Starting Asset Gathering... Mode: ${isSingleVideoMode ? 'HeyGen 一鏡到底 (省點數模式)' : '平行合成模式'}`);
-
-    // 1. Gather Assets
-// 👇 更新函式簽名，加入 preGeneratedHeygenUrl 參數
-  async assemble(script: ScriptData, outputFilename: string, config?: any, characterProfile?: any, preGeneratedHeygenUrl?: string): Promise<string> {
-    const sceneAssets: { video: string; audio: string; duration: number; text: string }[] = [];
-    let totalDuration = 0;
-    // ... 前面的 config 變數設定保持不變 ...
 
     const isSingleVideoMode = (videoEngine === 'heygen' && config?.heygenAvatarId);
     let singleVideoPath = '';
@@ -179,8 +169,6 @@ export class VideoAssembler {
         sceneAssets.push(...resolvedAssets);
         totalDuration = sceneAssets.reduce((sum, asset) => sum + asset.duration, 0);
     }
-
-    // ... 下方的 2. Generate Subtitles (ASS) 保持不變，但記得將 FFmpeg 合成邏輯套用這兩種模式 ...
 
     // 2. 字幕與時間軸處理 (ASS)
     const assPath = path.join(this.tempDir, 'subtitles.ass');
@@ -372,7 +360,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   }
 
   private async generateAiVideo(prompt: string, engine: 'veo' | 'sora' | 'jimeng', outputPath: string, characterProfile?: any, referenceImage?: string): Promise<void> {
-      // 原本的邏輯完全不動，保持 VEO 的兼容性
       console.log(`Generating AI Video with ${engine}: ${prompt}`);
       let finalPrompt = prompt;
       let imageInput = undefined;

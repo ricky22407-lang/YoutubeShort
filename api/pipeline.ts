@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Buffer } from 'buffer';
 import { ScriptGenerator } from '../modules/ScriptGenerator.js';
 import { VideoAssembler } from '../modules/VideoAssembler.js';
+import { HeyGenService } from '../modules/HeyGenService.js'; // 👈 這裡補上鑰匙了！
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -37,7 +38,6 @@ async function refreshAccessToken(refreshToken: string) {
 }
 
 export default async function handler(req: any, res: any) {
-  // 👉 核心修復：處理瀏覽器的 CORS 預檢請求，徹底解決 405 Error
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -62,7 +62,6 @@ export default async function handler(req: any, res: any) {
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
-      // 👇 新增這兩個 HeyGen 專用的 API 接口
       case 'heygen_submit': {
         const heyGen = new HeyGenService();
         const fullText = scriptData.scenes.map((s: any) => s.narration).join(' ');
@@ -80,57 +79,21 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, status: result.status, videoUrl: result.url });
       }
 
-      // ... suggest_topics 和 generate_script 保持不變 ...
-
-      case 'render_mpt': {
-        const useStockFootage = channel.mptConfig?.useStockFootage ?? true;
-        
-        if (useStockFootage && !PEXELS_API_KEY) {
-           return res.status(200).json({ success: false, error: 'PEXELS_API_KEY Missing' });
-        }
-        
-        const effectivePexelsKey = useStockFootage ? PEXELS_API_KEY! : 'DISABLED';
-        const assembler = new VideoAssembler(API_KEY, effectivePexelsKey);
-        const outputFilename = path.join(os.tmpdir(), `mpt_${Date.now()}.mp4`);
-        
-        try {
-            if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
-                try { await del(previousVideoUrl); } catch (e) {}
-            }
-
-            // 👇 核心修改：將前端傳來的 preGeneratedHeygenUrl 交給 Assembler
-            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl);
-            
-            const videoBuffer = fs.readFileSync(outputFilename);
-            const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
-            return res.status(200).json({ success: true, videoUrl: blob.url });
-        } catch (e: any) {
-            return res.status(200).json({ success: false, error: `Assembly Failed: ${e.message}` });
-        }
-      }
       case 'suggest_topics': {
         const prompt = `
             Generate 5 viral YouTube Shorts topic ideas for this channel.
             Channel Niche: ${channel.niche}
             Channel Concept: ${channel.concept || 'General'}
             Target Audience: ${channel.language === 'en' ? 'Global' : 'Taiwan/Hong Kong (Traditional Chinese)'}
-            ${channel.optimizationReport ? `
-            Insights from Optimization Report:
-            - Trending Topics: ${channel.optimizationReport.trendingTopics?.join(', ')}
-            - Strategic Advice: ${channel.optimizationReport.strategicAdvice}
-            ` : ''}
             Output ONLY a JSON array of strings. Example: ["Topic 1", "Topic 2"]
         `;
 
         const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite-preview', // 確保使用最新輕量級模型以增加速度
+            model: 'gemini-3.1-flash-lite-preview',
             contents: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                }
+                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
             }
         });
         
@@ -167,13 +130,11 @@ export default async function handler(req: any, res: any) {
                 }
             }
 
-            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile);
+            // 唯一正確的 assemble 呼叫
+            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl);
             
             const videoBuffer = fs.readFileSync(outputFilename);
-            const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, {
-                access: 'public',
-            });
-
+            const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
             return res.status(200).json({ success: true, videoUrl: blob.url });
         } catch (e: any) {
             console.error("Assembly Failed:", e);
@@ -190,13 +151,8 @@ export default async function handler(req: any, res: any) {
              === AGENT MODE ACTIVE ===
              You are acting as the AI Virtual Idol "${channel.characterProfile.name}".
              Persona: ${channel.characterProfile.description}.
-             Instead of generic content, generate content that fits your specific persona.
-             Think: "What would ${channel.characterProfile.name} post today to get attention?"
-             **CRITICAL: ADAPTIVE OUTFIT**
-             You MUST change the outfit description based on the video context.
-             Do NOT say "generic clothes". Be specific (e.g., "Pink oversized hoodie and yoga pants").
            `;
-           visualStyleOverride = "Visual Style: Shot on iPhone 15 Pro, vertical vlog format, slight camera shake, raw unedited feel. The character should look at the camera like they are Facetiming a friend.";
+           visualStyleOverride = "Visual Style: Shot on iPhone 15 Pro, vertical vlog format.";
         } else {
            promptContext = `Target Niche: ${channel.niche}. Concept: ${channel.concept}`;
            visualStyleOverride = "Visual Style: Cinematic, High Production Value, 4k, Arri Alexa.";
@@ -208,12 +164,6 @@ export default async function handler(req: any, res: any) {
           ${promptContext}
           TASK: Create a viral strategy for a YouTube Shorts video.
           Output Language: ${targetLang}.
-          === REALISM ENFORCER (CRITICAL) ===
-          To ensure the video does NOT look like a generic AI animation:
-          1. **Texture**: Specify "visible skin pores", "imperfections", "flyaway hairs", "dust particles".
-          2. **Lighting**: Use "Natural window light", "Harsh neon", or "Golden hour lens flare".
-          3. **Camera**: Specify "Handheld", "GoPro POV", "Security Camera grainy", or "35mm film grain".
-          4. **Motion**: "Micro-movements" (breathing, blinking, hair swaying) are better than complex physics.
           ${visualStyleOverride}
           Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
           config: {
@@ -238,113 +188,6 @@ export default async function handler(req: any, res: any) {
         
         const resultText = response.text || '';
         return res.status(200).json({ success: true, metadata: JSON.parse(cleanJson(resultText)) });
-      }
-
-      case 'generate_optimization_report': {
-        const mockPerformanceData = {
-            views: Math.floor(Math.random() * 10000) + 500,
-            subscribers: Math.floor(Math.random() * 1000) + 50,
-            engagementRate: (Math.random() * 10 + 2).toFixed(2) + '%',
-            recentVideos: [
-                { title: "My First Vlog", views: 1200, retention: 0.45 },
-                { title: "GRWM for School", views: 3500, retention: 0.60 },
-                { title: "Failed Cooking Attempt", views: 800, retention: 0.30 }
-            ]
-        };
-
-        const currentTrends = [
-            "ASMR packing", "Silent vlog", "Color analysis", "Digital camera aesthetic", "Day in my life"
-        ];
-
-        const prompt = `
-            Analyze this YouTube channel's performance and current market trends to generate an Optimization Report.
-            Channel Niche: ${channel.niche}
-            Performance Data: ${JSON.stringify(mockPerformanceData)}
-            Current Market Trends: ${JSON.stringify(currentTrends)}
-            Output JSON with:
-            - channelHealthScore (0-100)
-            - keyInsights (Array of strings, what went well/wrong)
-            - strategicAdvice (String, high-level strategy for next week)
-            - trendingTopics (Array of strings, relevant topics to ride)
-            - suggestedActions (Array of strings, specific video ideas or changes)
-        `;
-
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-pro-preview',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        channelHealthScore: { type: Type.NUMBER },
-                        keyInsights: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        strategicAdvice: { type: Type.STRING },
-                        trendingTopics: { type: Type.ARRAY, items: { type: Type.STRING } },
-                        suggestedActions: { type: Type.ARRAY, items: { type: Type.STRING } }
-                    },
-                    required: ["channelHealthScore", "keyInsights", "strategicAdvice", "trendingTopics", "suggestedActions"]
-                }
-            }
-        });
-
-        const report = JSON.parse(cleanJson(response.text || ''));
-        report.generatedAt = new Date().toISOString();
-        return res.status(200).json({ success: true, report });
-      }
-
-      case 'render_and_upload': {
-        let currentAccessToken = channel.auth?.access_token;
-        if (channel.auth?.refresh_token) {
-             try {
-                const refreshed = await refreshAccessToken(channel.auth.refresh_token);
-                currentAccessToken = refreshed.access_token;
-             } catch(e) {}
-        }
-
-        let operation = await ai.models.generateVideos({
-          model: 'veo-3.1-fast-generate-preview',
-          prompt: metadata.prompt,
-          config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
-        });
-
-        let attempts = 0;
-        while (!operation.done && attempts < 60) {
-          await new Promise(r => setTimeout(r, 5000));
-          operation = await ai.operations.getVideosOperation({ operation });
-          attempts++;
-        }
-        
-        if (!operation.done) throw new Error("Veo Timeout");
-        if (operation.error) throw new Error(`Veo Generation Failed: ${operation.error.message}`);
-
-        const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-        if (!downloadLink) throw new Error("Veo completed but returned no video URI.");
-
-        const videoRes = await fetch(`${downloadLink}&key=${API_KEY}`);
-        const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-
-        const boundary = '-------PIPELINE_UPLOAD';
-        const jsonMeta = JSON.stringify({
-             snippet: { title: metadata.title, description: metadata.desc, categoryId: "24" },
-             status: { privacyStatus: "public" }
-        });
-
-        const multipartBody = Buffer.concat([
-          Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${jsonMeta}\r\n`),
-          Buffer.from(`--${boundary}\r\nContent-Type: video/mp4\r\n\r\n`),
-          videoBuffer,
-          Buffer.from(`\r\n--${boundary}--`)
-        ]);
-
-        const uploadRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${currentAccessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
-            body: multipartBody
-        });
-        
-        const uploadData = await uploadRes.json();
-        return res.status(200).json({ success: true, videoId: uploadData.id || 'mock_id' });
       }
 
       default:
