@@ -77,25 +77,20 @@ export default async function handler(req: any, res: any) {
             return res.status(200).json({ success: false, error: '未提供 HeyGen Avatar ID 或 Group ID' });
         }
 
-        // 🚀 智慧偵測：判斷輸入的是多重 ID 還是 Group ID
         if (heygenIdInput.includes(',')) {
-            // 情境 1：手動逗號隔開的多個 ID
             finalAvatarIds = heygenIdInput.split(',').map((id: string) => id.trim()).filter((id: string) => id.length > 0);
             console.log(`[HeyGen] 偵測到手動多重 ID，共 ${finalAvatarIds.length} 個`);
         } else {
-            // 情境 2：去問問 HeyGen 這是不是一個 Group ID？
             const groupLooks = await heyGen.getAvatarGroupLooks(heygenIdInput);
             if (groupLooks.length > 0) {
                 finalAvatarIds = groupLooks;
                 console.log(`[HeyGen] 🎯 成功從 Avatar Group 獲取 ${groupLooks.length} 個 Looks！`);
             } else {
-                // 情境 3：找不到 Group，那這就是一個普通的單一 Avatar ID
                 finalAvatarIds = [heygenIdInput];
                 console.log(`[HeyGen] 偵測為單一 Avatar ID`);
             }
         }
         
-        // 隨機盲抽 (不管是 1 個還是 10 個，統一用抽籤邏輯)
         const selectedAvatarId = finalAvatarIds[Math.floor(Math.random() * finalAvatarIds.length)];
         console.log(`[HeyGen] 本次幸運抽選的 Avatar ID: ${selectedAvatarId}`);
 
@@ -112,6 +107,7 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'suggest_topics': {
+        console.log("[API] 收到 AI 靈感生成請求...");
         const prompt = `
             Generate 5 viral YouTube Shorts topic ideas for this channel.
             Channel Niche: ${channel.niche}
@@ -119,21 +115,28 @@ export default async function handler(req: any, res: any) {
             Target Audience: ${channel.language === 'en' ? 'Global' : 'Taiwan/Hong Kong (Traditional Chinese)'}
             Output ONLY a JSON array of strings. Example: ["Topic 1", "Topic 2"]
         `;
-        const response = await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite-preview',
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
-            }
-        });
-        const topics = JSON.parse(cleanJson(response.text || '[]'));
-        return res.status(200).json({ success: true, topics });
+        
+        try {
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview', // 🚀 修復：使用確定有效的模型
+                contents: prompt,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: { type: "ARRAY", items: { type: "STRING" } }
+                }
+            });
+            const resultText = response.text || '[]';
+            console.log("[API] AI 靈感生成完成:", resultText);
+            const topics = JSON.parse(cleanJson(resultText));
+            return res.status(200).json({ success: true, topics });
+        } catch (error: any) {
+            console.error("[API] AI 靈感生成錯誤:", error);
+            return res.status(200).json({ success: false, error: error.message });
+        }
       }
 
       case 'generate_script': {
         const generator = new ScriptGenerator(API_KEY);
-        // 👇 根據前端選項，強勢注入字數限制 Prompt
         const targetDuration = req.body.targetDuration || '60';
         const durationPrompt = targetDuration === '30' 
             ? "\n【極重要】腳本總時長必須嚴格控制在 30 秒以內！總字數請限制在 80~100 字左右，節奏要極快。" 
@@ -167,7 +170,57 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'analyze': {
-        return res.status(400).json({ success: false, error: '分析功能在此版本暫時隱藏' });
+        console.log("[API] 收到影片分析請求...");
+        let promptContext = "";
+        let visualStyleOverride = "";
+        
+        if (channel.mode === 'character' && channel.characterProfile) {
+           promptContext = `
+             === AGENT MODE ACTIVE ===
+             You are acting as the AI Virtual Idol "${channel.characterProfile.name}".
+             Persona: ${channel.characterProfile.description}.
+           `;
+           visualStyleOverride = "Visual Style: Shot on iPhone 15 Pro, vertical vlog format.";
+        } else {
+           promptContext = `Target Niche: ${channel.niche}. Concept: ${channel.concept}`;
+           visualStyleOverride = "Visual Style: Cinematic, High Production Value, 4k, Arri Alexa.";
+        }
+
+        const targetLang = channel.language === 'en' ? 'English' : 'Traditional Chinese (zh-TW)';
+        const analysisParams = {
+          contents: `
+          ${promptContext}
+          TASK: Create a viral strategy for a YouTube Shorts video.
+          Output Language: ${targetLang}.
+          ${visualStyleOverride}
+          Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                prompt: { type: "STRING" },
+                title: { type: "STRING" },
+                desc: { type: "STRING" },
+                strategy_note: { type: "STRING" }
+              },
+              required: ["prompt", "title", "desc", "strategy_note"]
+            }
+          }
+        };
+
+        try {
+            const response = await ai.models.generateContent({
+                model: 'gemini-3-flash-preview', // 🚀 修復：使用確定有效的模型
+                ...analysisParams
+            });
+            const resultText = response.text || '{}';
+            console.log("[API] 影片分析完成");
+            return res.status(200).json({ success: true, metadata: JSON.parse(cleanJson(resultText)) });
+        } catch (err: any) {
+            console.error("[API] 影片分析錯誤:", err);
+            return res.status(200).json({ success: false, error: err.message });
+        }
       }
 
       default:
