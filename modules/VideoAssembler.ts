@@ -33,16 +33,21 @@ export class VideoAssembler {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
+  // 🚀 強化版：時長讀取雙保險
   private async getDuration(filePath: string): Promise<number> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
-        if (err) return reject(err);
-        resolve(metadata.format.duration || 0);
+        if (err) {
+            console.warn(`[FFprobe] 無法精準讀取時長，將回傳 0 觸發備用機制:`, err.message);
+            return resolve(0);
+        }
+        // 同時檢查 format 和 streams，確保抓到時長
+        const duration = Number(metadata.format?.duration || metadata.streams?.[0]?.duration || 0);
+        resolve(isNaN(duration) ? 0 : duration);
       });
     });
   }
 
-  // 🚀 防護升級：加入 60 秒 Timeout 機制，防止網路卡死 Vercel
   private async downloadFile(url: string, dest: string, timeoutMs: number = 60000): Promise<void> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -52,9 +57,7 @@ export class VideoAssembler {
         const fileStream = fs.createWriteStream(dest);
         await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
     } catch (e: any) {
-        if (e.name === 'AbortError') {
-            throw new Error("下載超時 (Timeout)，伺服器主動放棄連接。");
-        }
+        if (e.name === 'AbortError') throw new Error("下載超時 (Timeout)，伺服器主動放棄連接。");
         throw e;
     } finally {
         clearTimeout(timeoutId);
@@ -141,14 +144,24 @@ export class VideoAssembler {
         singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
         console.log(`[HeyGen] 接收到已渲染完成的影片 URL，直接下載至伺服器...`);
         await this.downloadFile(preGeneratedHeygenUrl, singleVideoPath);
-        console.log(`[HeyGen] 影片實體檔案下載成功！`);
+        
         totalHeygenDuration = await this.getDuration(singleVideoPath);
+        // 防呆機制：如果讀不到時長，預設給 50 秒，避免字幕時間歸零
+        if (totalHeygenDuration <= 0) {
+            console.warn(`[HeyGen] ⚠️ 讀取時長失敗，啟用預設備用時長 (50秒)`);
+            totalHeygenDuration = 50; 
+        } else {
+            console.log(`[HeyGen] 影片實體檔案下載成功！時長: ${totalHeygenDuration} 秒`);
+        }
 
-        const totalChars = script.scenes.map(s => s.narration).join('').replace(/\s+/g, '').length;
+        const totalChars = script.scenes.map(s => s.narration.replace(/[\n\r\s]+/g, '')).join('').length;
         for (const scene of script.scenes) {
-            const sceneChars = scene.narration.replace(/\s+/g, '').length;
+            // 🚀 核心修復：把換行符號 `\n` 洗掉，防止 ASS 字幕檔崩潰！
+            const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
+            const sceneChars = cleanNarration.replace(/\s+/g, '').length;
+            
             const duration = totalHeygenDuration * (sceneChars / Math.max(totalChars, 1));
-            sceneAssets.push({ video: singleVideoPath, audio: '', duration: duration, text: scene.narration });
+            sceneAssets.push({ video: singleVideoPath, audio: '', duration: duration, text: cleanNarration });
             totalDuration += duration;
         }
 
@@ -157,9 +170,10 @@ export class VideoAssembler {
             const sceneId = scene.id;
             const audioPath = path.join(this.tempDir, `scene_${sceneId}.mp3`);
             let videoPath = path.join(this.tempDir, `scene_${sceneId}.mp4`);
+            const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
             if (!fs.existsSync(audioPath)) {
-                await this.ttsService.generateAudio(scene.narration, audioPath, voiceId);
+                await this.ttsService.generateAudio(cleanNarration, audioPath, voiceId);
             }
             
             if (!fs.existsSync(videoPath)) {
@@ -172,7 +186,7 @@ export class VideoAssembler {
                     await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
                 }
             }
-            return { video: videoPath, audio: audioPath, duration: await this.getDuration(audioPath), text: scene.narration };
+            return { video: videoPath, audio: audioPath, duration: await this.getDuration(audioPath), text: cleanNarration };
         });
 
         const resolvedAssets = await Promise.all(assetPromises);
@@ -204,15 +218,13 @@ export class VideoAssembler {
     };
 
     if (isSingleVideoMode) {
-        const totalChars = script.scenes.map(s => s.narration).join('').replace(/\s+/g, '').length;
-        for (const scene of script.scenes) {
-            const sceneChars = scene.narration.replace(/\s+/g, '').length;
-            const duration = totalHeygenDuration * (sceneChars / Math.max(totalChars, 1));
+        for (const asset of sceneAssets) {
+            const duration = asset.duration;
             const start = currentTime;
             const end = currentTime + duration;
             
             const durationMs = Math.round(duration * 100);
-            const words = scene.narration.split(''); 
+            const words = asset.text.split(''); 
             const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
             let karaokeText = '';
             words.forEach(w => { karaokeText += `{\\k${charDuration}}${w}`; });
@@ -220,6 +232,7 @@ export class VideoAssembler {
             assEvents += `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${karaokeText}\n`;
             currentTime += duration;
         }
+        console.log(`[ASS] 字幕檔產生完畢，軌跡片段預覽: \n${assEvents.substring(0, 150)}...`);
     } else {
         for (const asset of sceneAssets) {
             const vttPath = asset.audio.replace('.mp3', '.vtt');
@@ -232,11 +245,11 @@ export class VideoAssembler {
                         const times = lines[i].split('-->');
                         const start = parseVttTime(times[0].trim());
                         const end = parseVttTime(times[1].trim());
-                        const text = lines[i + 1]?.trim(); 
+                        const text = lines[i + 1]?.trim().replace(/[\n\r]+/g, ' '); 
                         if (text) {
                             const durationMs = Math.round((end - start) * 100); 
                             const words = text.split(''); 
-                            const charDuration = Math.floor(durationMs / words.length);
+                            const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
                             let karaokeText = '';
                             words.forEach(w => { karaokeText += `{\\k${charDuration}}${w}`; });
                             assEvents += `Dialogue: 0,${formatAssTime(currentTime + start)},${formatAssTime(currentTime + end)},Default,,0,0,0,,${karaokeText}\n`;
@@ -309,7 +322,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
                 filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
                 
-                // 🚀 核心修復：將 duration=first 改為 duration=shortest 解決無限掛起 Bug
                 filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
                 aFinal = '[a_mixed]';
             } else {
@@ -341,8 +353,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 const bgmIndex = ttsStartIndex + sceneAssets.length;
                 filterComplex.push(`[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
                 filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
-                
-                // 🚀 核心修復：將 duration=first 改為 duration=shortest 解決無限掛起 Bug
                 filterComplex.push(`[bgm_low][a_tts]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
                 aFinal = '[a_mixed]';
             } else {
