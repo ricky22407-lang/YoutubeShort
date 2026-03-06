@@ -42,11 +42,23 @@ export class VideoAssembler {
     });
   }
 
-  private async downloadFile(url: string, dest: string): Promise<void> {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to download ${url}: ${res.statusText}`);
-    const fileStream = fs.createWriteStream(dest);
-    await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
+  // 🚀 防護升級：加入 60 秒 Timeout 機制，防止網路卡死 Vercel
+  private async downloadFile(url: string, dest: string, timeoutMs: number = 60000): Promise<void> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error(`Failed to download ${url}: ${res.statusText}`);
+        const fileStream = fs.createWriteStream(dest);
+        await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
+    } catch (e: any) {
+        if (e.name === 'AbortError') {
+            throw new Error("下載超時 (Timeout)，伺服器主動放棄連接。");
+        }
+        throw e;
+    } finally {
+        clearTimeout(timeoutId);
+    }
   }
 
   private async getFilesInDriveFolder(folderId: string): Promise<{ id: string; name: string }[]> {
@@ -85,19 +97,19 @@ export class VideoAssembler {
       if (!folderId || folderId === 'FOLDER_ID_HERE') return '';
 
       try {
-          console.log(`Fetching BGM from Google Drive (Mood: ${mood})...`);
+          console.log(`[BGM API] 正在向 Google Drive 請求配樂列表 (Mood: ${mood})...`);
           const files = await this.getFilesInDriveFolder(folderId);
           if (files.length > 0) {
               const randomFile = files[Math.floor(Math.random() * files.length)];
+              console.log(`[BGM API] 成功選定配樂: ${randomFile.name} (${randomFile.id})`);
               return `https://drive.google.com/uc?export=download&id=${randomFile.id}`;
           }
       } catch (error) {
-          console.error("Failed to fetch BGM:", error);
+          console.error("Failed to fetch BGM list:", error);
       }
       return '';
   }
 
-  // 👇 正確修復的單一 assemble 函式
   async assemble(script: ScriptData, outputFilename: string, config?: any, characterProfile?: any, preGeneratedHeygenUrl?: string): Promise<string> {
     const sceneAssets: { video: string; audio: string; duration: number; text: string }[] = [];
     let totalDuration = 0;
@@ -124,15 +136,14 @@ export class VideoAssembler {
 
     // 1. Gather Assets (Audio & Video)
     if (isSingleVideoMode) {
-        // 🚀 一鏡到底：直接下載前端等好的影片，不再等待 HeyGen
         if (!preGeneratedHeygenUrl) throw new Error("系統錯誤：未收到預先生成的 HeyGen 影片網址！");
         
         singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
         console.log(`[HeyGen] 接收到已渲染完成的影片 URL，直接下載至伺服器...`);
         await this.downloadFile(preGeneratedHeygenUrl, singleVideoPath);
+        console.log(`[HeyGen] 影片實體檔案下載成功！`);
         totalHeygenDuration = await this.getDuration(singleVideoPath);
 
-        // 幫字幕系統做假性分段 (依據字數比例)
         const totalChars = script.scenes.map(s => s.narration).join('').replace(/\s+/g, '').length;
         for (const scene of script.scenes) {
             const sceneChars = scene.narration.replace(/\s+/g, '').length;
@@ -142,7 +153,6 @@ export class VideoAssembler {
         }
 
     } else {
-        // 🚀 其他引擎的平行加速處理
         const assetPromises = script.scenes.map(async (scene) => {
             const sceneId = scene.id;
             const audioPath = path.join(this.tempDir, `scene_${sceneId}.mp3`);
@@ -194,7 +204,6 @@ export class VideoAssembler {
     };
 
     if (isSingleVideoMode) {
-        // HeyGen 一鏡到底：用字數比例精準切分字幕時長 (保留卡拉OK效果)
         const totalChars = script.scenes.map(s => s.narration).join('').replace(/\s+/g, '').length;
         for (const scene of script.scenes) {
             const sceneChars = scene.narration.replace(/\s+/g, '').length;
@@ -212,7 +221,6 @@ export class VideoAssembler {
             currentTime += duration;
         }
     } else {
-        // 傳統多片段：讀取 VTT 產生精準字幕
         for (const asset of sceneAssets) {
             const vttPath = asset.audio.replace('.mp3', '.vtt');
             if (fs.existsSync(vttPath)) {
@@ -272,13 +280,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const bgmUrl = await this.fetchDynamicBgm(bgmMood);
         if (bgmUrl) {
             bgmPath = path.join(this.tempDir, `bgm_${Date.now()}.mp3`);
-            try { await this.downloadFile(bgmUrl, bgmPath); } 
-            catch (e) { console.error("BGM Download Failed", e); bgmPath = ''; }
+            try { 
+                console.log(`[BGM] 開始將音樂檔案下載至伺服器...`);
+                await this.downloadFile(bgmUrl, bgmPath); 
+                console.log(`[BGM] 音樂檔案下載成功！`);
+            } 
+            catch (e: any) { 
+                console.warn(`[BGM] 音樂下載失敗，將無配樂繼續渲染: ${e.message}`); 
+                bgmPath = ''; 
+            }
         }
     }
 
     // 4. 啟動 FFmpeg 終極渲染
     return new Promise((resolve, reject) => {
+        console.log(`[FFmpeg] 引擎點火！開始進行影像、字幕與音樂的終極合成...`);
         const cmd = ffmpeg();
         const filterComplex: string[] = [];
         let vFinal = '';
@@ -292,7 +308,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[v_scaled]`);
                 filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
                 filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
-                filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=first:dropout_transition=2[a_mixed]`);
+                
+                // 🚀 核心修復：將 duration=first 改為 duration=shortest 解決無限掛起 Bug
+                filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
                 aFinal = '[a_mixed]';
             } else {
                 filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[v_scaled]`);
@@ -323,7 +341,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 const bgmIndex = ttsStartIndex + sceneAssets.length;
                 filterComplex.push(`[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
                 filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
-                filterComplex.push(`[bgm_low][a_tts]amix=inputs=2:duration=first:dropout_transition=2[a_mixed]`);
+                
+                // 🚀 核心修復：將 duration=first 改為 duration=shortest 解決無限掛起 Bug
+                filterComplex.push(`[bgm_low][a_tts]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
                 aFinal = '[a_mixed]';
             } else {
                 filterComplex.push(`[a_tts]anull[a_mixed]`);
