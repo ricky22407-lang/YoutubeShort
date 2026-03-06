@@ -33,7 +33,6 @@ export class VideoAssembler {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
-  // 🚀 強化版：時長讀取雙保險
   private async getDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -41,7 +40,6 @@ export class VideoAssembler {
             console.warn(`[FFprobe] 無法精準讀取時長，將回傳 0 觸發備用機制:`, err.message);
             return resolve(0);
         }
-        // 同時檢查 format 和 streams，確保抓到時長
         const duration = Number(metadata.format?.duration || metadata.streams?.[0]?.duration || 0);
         resolve(isNaN(duration) ? 0 : duration);
       });
@@ -146,7 +144,6 @@ export class VideoAssembler {
         await this.downloadFile(preGeneratedHeygenUrl, singleVideoPath);
         
         totalHeygenDuration = await this.getDuration(singleVideoPath);
-        // 防呆機制：如果讀不到時長，預設給 50 秒，避免字幕時間歸零
         if (totalHeygenDuration <= 0) {
             console.warn(`[HeyGen] ⚠️ 讀取時長失敗，啟用預設備用時長 (50秒)`);
             totalHeygenDuration = 50; 
@@ -156,7 +153,6 @@ export class VideoAssembler {
 
         const totalChars = script.scenes.map(s => s.narration.replace(/[\n\r\s]+/g, '')).join('').length;
         for (const scene of script.scenes) {
-            // 🚀 核心修復：把換行符號 `\n` 洗掉，防止 ASS 字幕檔崩潰！
             const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
             const sceneChars = cleanNarration.replace(/\s+/g, '').length;
             
@@ -214,7 +210,7 @@ export class VideoAssembler {
 
     const hexToASS = (hex: string) => {
         const clean = hex.replace('#', '');
-        return clean.length === 6 ? `&H00${clean.substring(4, 6)}${clean.substring(2, 4)}${clean.substring(0, 2)}` : '&H00FFFF';
+        return clean.length === 6 ? `&H00${clean.substring(4, 6)}${clean.substring(2, 4)}${clean.substring(0, 2)}` : '&H0000FFFF';
     };
 
     if (isSingleVideoMode) {
@@ -232,7 +228,6 @@ export class VideoAssembler {
             assEvents += `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${karaokeText}\n`;
             currentTime += duration;
         }
-        console.log(`[ASS] 字幕檔產生完畢，軌跡片段預覽: \n${assEvents.substring(0, 150)}...`);
     } else {
         for (const asset of sceneAssets) {
             const vttPath = asset.audio.replace('.mp3', '.vtt');
@@ -273,6 +268,8 @@ export class VideoAssembler {
         'Bangers-Regular.ttf': 'Bangers'
     };
     
+    const selectedFontFamily = fontMap[fontName] || 'Noto Sans TC';
+
     const assHeader = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -280,12 +277,13 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${fontMap[fontName] || 'Arial'},${fontSize},${config?.subtitleColor ? hexToASS(config.subtitleColor) : '&H00FFFF'},&H00FFFFFF,&H000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,350,1
+Style: Default,${selectedFontFamily},${fontSize},${config?.subtitleColor ? hexToASS(config.subtitleColor) : '&H0000FFFF'},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,350,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-    fs.writeFileSync(assPath, assHeader + assEvents);
+    // 🚀 核心外掛 1：寫入帶有 BOM 標籤的 UTF-8 字幕檔，防止亂碼隱形
+    fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
 
     // 3. 下載 BGM
     let bgmPath = '';
@@ -308,20 +306,40 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     // 4. 啟動 FFmpeg 終極渲染
     return new Promise((resolve, reject) => {
         console.log(`[FFmpeg] 引擎點火！開始進行影像、字幕與音樂的終極合成...`);
+        
+        // 🚀 核心外掛 2：強勢建立 Fontconfig 環境，逼迫 Vercel 吞下中文字體！
+        const fontsDir = path.join(process.cwd(), 'fonts');
+        const fontConfigDir = path.join(this.tempDir, 'fontconfig');
+        if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
+        
+        const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
+        const fontsConfContent = `<?xml version="1.0"?>
+        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+        <fontconfig>
+          <dir>${fontsDir}</dir>
+          <cachedir>${fontConfigDir}</cachedir>
+          <match target="pattern">
+            <edit name="family" mode="append"><string>${selectedFontFamily}</string></edit>
+          </match>
+        </fontconfig>`;
+        fs.writeFileSync(fontsConfPath, fontsConfContent, 'utf8');
+        
+        // 覆寫系統環境變數，讓 FFmpeg 的引擎強制讀取我們建立的索引
+        process.env.FONTCONFIG_PATH = fontConfigDir;
+        process.env.FONTCONFIG_FILE = fontsConfPath;
+
         const cmd = ffmpeg();
         const filterComplex: string[] = [];
         let vFinal = '';
         let aFinal = '';
 
         if (isSingleVideoMode) {
-            // 分支 A: HeyGen 一鏡到底渲染
             cmd.input(singleVideoPath);
             if (bgmPath && fs.existsSync(bgmPath)) {
                 cmd.input(bgmPath);
                 filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[v_scaled]`);
                 filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
                 filterComplex.push(`[bgm_loop]volume=${bgmVolume}[bgm_low]`);
-                
                 filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
                 aFinal = '[a_mixed]';
             } else {
@@ -331,7 +349,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             vFinal = '[v_scaled]';
 
         } else {
-            // 分支 B: 傳統多片段拼接渲染
             sceneAssets.forEach(a => cmd.input(a.video));
             sceneAssets.forEach(a => cmd.input(a.audio));
             if (bgmPath && fs.existsSync(bgmPath)) cmd.input(bgmPath);
@@ -362,7 +379,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             vFinal = '[v_concat]';
         }
 
-        // 壓上字幕並輸出
         const assPathEscaped = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
         const fontsDirEscaped = path.join(process.cwd(), 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
         filterComplex.push(`${vFinal}ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
