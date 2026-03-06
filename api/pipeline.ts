@@ -62,6 +62,52 @@ export default async function handler(req: any, res: any) {
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
+      // 👇 新增這兩個 HeyGen 專用的 API 接口
+      case 'heygen_submit': {
+        const heyGen = new HeyGenService();
+        const fullText = scriptData.scenes.map((s: any) => s.narration).join(' ');
+        let voiceId = channel.mptConfig?.voiceId || 'zh-TW-HsiaoChenNeural';
+        if (channel.mptConfig?.ttsEngine === 'elevenlabs' && channel.mptConfig?.elevenLabsVoiceId) {
+            voiceId = channel.mptConfig.elevenLabsVoiceId;
+        }
+        const videoId = await heyGen.submitVideoTask(fullText, channel.mptConfig?.heygenAvatarId, voiceId);
+        return res.status(200).json({ success: true, videoId });
+      }
+
+      case 'heygen_status': {
+        const heyGen = new HeyGenService();
+        const result = await heyGen.checkVideoStatus(req.body.videoId);
+        return res.status(200).json({ success: true, status: result.status, videoUrl: result.url });
+      }
+
+      // ... suggest_topics 和 generate_script 保持不變 ...
+
+      case 'render_mpt': {
+        const useStockFootage = channel.mptConfig?.useStockFootage ?? true;
+        
+        if (useStockFootage && !PEXELS_API_KEY) {
+           return res.status(200).json({ success: false, error: 'PEXELS_API_KEY Missing' });
+        }
+        
+        const effectivePexelsKey = useStockFootage ? PEXELS_API_KEY! : 'DISABLED';
+        const assembler = new VideoAssembler(API_KEY, effectivePexelsKey);
+        const outputFilename = path.join(os.tmpdir(), `mpt_${Date.now()}.mp4`);
+        
+        try {
+            if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
+                try { await del(previousVideoUrl); } catch (e) {}
+            }
+
+            // 👇 核心修改：將前端傳來的 preGeneratedHeygenUrl 交給 Assembler
+            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl);
+            
+            const videoBuffer = fs.readFileSync(outputFilename);
+            const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
+            return res.status(200).json({ success: true, videoUrl: blob.url });
+        } catch (e: any) {
+            return res.status(200).json({ success: false, error: `Assembly Failed: ${e.message}` });
+        }
+      }
       case 'suggest_topics': {
         const prompt = `
             Generate 5 viral YouTube Shorts topic ideas for this channel.

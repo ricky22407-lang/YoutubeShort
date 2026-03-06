@@ -120,20 +120,39 @@ export class VideoAssembler {
     console.log(`Starting Asset Gathering... Mode: ${isSingleVideoMode ? 'HeyGen 一鏡到底 (省點數模式)' : '平行合成模式'}`);
 
     // 1. Gather Assets
+// 👇 更新函式簽名，加入 preGeneratedHeygenUrl 參數
+  async assemble(script: ScriptData, outputFilename: string, config?: any, characterProfile?: any, preGeneratedHeygenUrl?: string): Promise<string> {
+    const sceneAssets: { video: string; audio: string; duration: number; text: string }[] = [];
+    let totalDuration = 0;
+    // ... 前面的 config 變數設定保持不變 ...
+
+    const isSingleVideoMode = (videoEngine === 'heygen' && config?.heygenAvatarId);
+    let singleVideoPath = '';
+    let totalHeygenDuration = 0;
+
+    console.log(`Starting Asset Gathering... Mode: ${isSingleVideoMode ? 'HeyGen 一鏡到底' : '平行合成'}`);
+
+    // 1. Gather Assets (Audio & Video)
     if (isSingleVideoMode) {
-        // === 🚀 戰略 2：極致省錢一鏡到底模式 ===
-        const fullText = script.scenes.map(s => s.narration).join(' ');
+        // 🚀 一鏡到底：直接下載前端等好的影片，不再等待 HeyGen
+        if (!preGeneratedHeygenUrl) throw new Error("系統錯誤：未收到預先生成的 HeyGen 影片網址！");
+        
         singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
-        
-        console.log(`[HeyGen] 正在發送合併請求 (省去多次扣款)，腳本總字數: ${fullText.length}`);
-        const heyGenUrl = await this.heyGenService.generateVideo(fullText, config.heygenAvatarId, voiceId);
-        
-        console.log(`[HeyGen] 下載完成的一鏡到底影片...`);
-        await this.downloadFile(heyGenUrl, singleVideoPath);
+        console.log(`[HeyGen] 接收到已渲染完成的影片 URL，直接下載至伺服器...`);
+        await this.downloadFile(preGeneratedHeygenUrl, singleVideoPath);
         totalHeygenDuration = await this.getDuration(singleVideoPath);
-        
+
+        // 幫字幕系統做假性分段 (依據字數比例)
+        const totalChars = script.scenes.map(s => s.narration).join('').replace(/\s+/g, '').length;
+        for (const scene of script.scenes) {
+            const sceneChars = scene.narration.replace(/\s+/g, '').length;
+            const duration = totalHeygenDuration * (sceneChars / Math.max(totalChars, 1));
+            sceneAssets.push({ video: singleVideoPath, audio: '', duration: duration, text: scene.narration });
+            totalDuration += duration;
+        }
+
     } else {
-        // === 🚀 戰略 1：素材/Veo的平行加速處理 ===
+        // 🚀 其他引擎的平行加速處理
         const assetPromises = script.scenes.map(async (scene) => {
             const sceneId = scene.id;
             const audioPath = path.join(this.tempDir, `scene_${sceneId}.mp3`);
@@ -147,23 +166,21 @@ export class VideoAssembler {
                 const isFirstSceneWithProduct = script.referenceImage && scene.id === 1;
                 if (useStockFootage && !isFirstSceneWithProduct) {
                     const videoUrls = await searchVideos(scene.visual_cue, this.pexelsApiKey);
-                    if (videoUrls.length > 0) {
-                        await this.downloadFile(videoUrls[0], videoPath);
-                    } else {
-                        await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
-                    }
+                    if (videoUrls.length > 0) await this.downloadFile(videoUrls[0], videoPath);
+                    else await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
                 } else {
                     await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
                 }
             }
-
-            const duration = await this.getDuration(audioPath);
-            return { video: videoPath, audio: audioPath, duration: duration, text: scene.narration };
+            return { video: videoPath, audio: audioPath, duration: await this.getDuration(audioPath), text: scene.narration };
         });
 
         const resolvedAssets = await Promise.all(assetPromises);
         sceneAssets.push(...resolvedAssets);
+        totalDuration = sceneAssets.reduce((sum, asset) => sum + asset.duration, 0);
     }
+
+    // ... 下方的 2. Generate Subtitles (ASS) 保持不變，但記得將 FFmpeg 合成邏輯套用這兩種模式 ...
 
     // 2. 字幕與時間軸處理 (ASS)
     const assPath = path.join(this.tempDir, 'subtitles.ass');

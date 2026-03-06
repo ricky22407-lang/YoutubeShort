@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { ChannelConfig, ScriptData } from '../types';
 
 interface MPTStudioProps {
@@ -28,6 +29,20 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     bgmMood: 'random' as 'random' | 'epic' | 'relaxing' | 'funny' | 'suspense' | 'none'
   });
 
+// 👇 1. 頁面載入時，從 LocalStorage 讀取上次的設定
+  useEffect(() => {
+    const savedConfig = localStorage.getItem(`mptConfig_${channel.id}`);
+    if (savedConfig) {
+      try {
+        setConfig(JSON.parse(savedConfig));
+      } catch (e) { console.error("解析設定失敗", e); }
+    }
+  }, [channel.id]);
+
+  // 👇 2. 每當 config 改變時，自動存入 LocalStorage
+  useEffect(() => {
+    localStorage.setItem(`mptConfig_${channel.id}`, JSON.stringify(config));
+  }, [config, channel.id]);
   const [uploadTargets, setUploadTargets] = useState<string[]>([]);
   const [topicMode, setTopicMode] = useState<'custom' | 'trend' | 'ai'>('custom');
   const [customTopic, setCustomTopic] = useState("");
@@ -128,25 +143,56 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       }
   };
 
+  // 👇 3. 修改 renderVideo，加入防超時的輪詢邏輯
   const renderVideo = async () => {
     if (!script) return;
     
-    // 防呆：如果選了 HeyGen 卻沒填 ID
     if (config.videoEngine === 'heygen' && !config.heygenAvatarId) {
         setLog("⚠️ 錯誤：您選擇了 HeyGen 引擎，請填寫 Avatar ID！");
         return;
     }
 
     setLoading(true);
-    setLog(`正在渲染影片 (模式: ${config.useStockFootage ? '混合模式 (素材庫 + AI)' : config.videoEngine})...`);
+    setLog(`正在準備環境 (模式: ${config.useStockFootage ? '混合模式' : config.videoEngine})...`);
     
-    const tempChannel = { 
-      ...channel, 
-      mptConfig: config,
-      uploadTargets: [] 
-    };
+    const tempChannel = { ...channel, mptConfig: config, uploadTargets: [] };
 
     try {
+      let finalHeygenUrl = undefined;
+
+      // 🚀 HeyGen 專用：前端智能輪詢 (防超時魔法)
+      if (config.videoEngine === 'heygen' && config.heygenAvatarId) {
+          setLog('正在提交 HeyGen 渲染任務...'); 
+          const submitRes = await fetch('/api/pipeline', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ stage: 'heygen_submit', channel: tempChannel, scriptData: script })
+          }).then(r => r.json());
+          
+          if (!submitRes.success) throw new Error(submitRes.error || "提交 HeyGen 任務失敗");
+          
+          setLog('HeyGen 雲端算圖中 (預計 3~5 分鐘，前 3 分鐘系統將暫停連線以節省資源)...');
+          await new Promise(resolve => setTimeout(resolve, 180000)); // 強制大休眠 3 分鐘
+          
+          setLog('正在確認 HeyGen 渲染進度...');
+          while (true) {
+              const statusRes = await fetch('/api/pipeline', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ stage: 'heygen_status', videoId: submitRes.videoId })
+              }).then(r => r.json());
+              
+              if (statusRes.status === 'completed') {
+                  finalHeygenUrl = statusRes.videoUrl;
+                  break;
+              } else if (statusRes.status === 'failed' || statusRes.status === 'error') {
+                  throw new Error("HeyGen 影片渲染失敗，請檢查點數或後台狀態。");
+              }
+              await new Promise(resolve => setTimeout(resolve, 10000)); // 每 10 秒戳一次
+          }
+      }
+
+      setLog('正在合成最終影片與字幕...');
       const res = await fetch('/api/pipeline', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -154,14 +200,14 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             stage: 'render_mpt', 
             channel: tempChannel, 
             scriptData: { ...script, referenceImage: referenceImage || script.referenceImage },
-            previousVideoUrl: videoUrl 
+            previousVideoUrl: videoUrl,
+            preGeneratedHeygenUrl: finalHeygenUrl // 將拿到的網址餵給後端
         })
       });
-      const data = await res.json();
       
+      const data = await res.json();
       if (data.success) {
-        const url = data.videoUrl;
-        setVideoUrl(url);
+        setVideoUrl(data.videoUrl);
         setLog("渲染完成！請預覽影片並確認發布。");
       } else {
         setLog("錯誤: " + data.error);
