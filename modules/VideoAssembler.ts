@@ -282,7 +282,6 @@ Style: Default,${selectedFontFamily},${fontSize},${config?.subtitleColor ? hexTo
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-    // 🚀 核心外掛 1：寫入帶有 BOM 標籤的 UTF-8 字幕檔，防止亂碼隱形
     fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
 
     // 3. 下載 BGM
@@ -297,7 +296,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 console.log(`[BGM] 音樂檔案下載成功！`);
             } 
             catch (e: any) { 
-                console.warn(`[BGM] 音樂下載失敗，將無配樂繼續渲染: ${e.message}`); 
+                console.warn(`[BGM] 音樂下載失敗: ${e.message}`); 
                 bgmPath = ''; 
             }
         }
@@ -307,24 +306,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return new Promise((resolve, reject) => {
         console.log(`[FFmpeg] 引擎點火！開始進行影像、字幕與音樂的終極合成...`);
         
-        // 🚀 核心外掛 2：強勢建立 Fontconfig 環境，逼迫 Vercel 吞下中文字體！
-        const fontsDir = path.join(process.cwd(), 'fonts');
+        // 🚀 核心外掛：尋找字體檔案，並建立強制綁架的 Fontconfig
         const fontConfigDir = path.join(this.tempDir, 'fontconfig');
+        const localFontDir = path.join(this.tempDir, 'fonts_cache');
         if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
-        
+        if (!fs.existsSync(localFontDir)) fs.mkdirSync(localFontDir, { recursive: true });
+
+        // Vercel 路徑地毯式搜索
+        let systemFontDir = path.join(process.cwd(), 'fonts');
+        if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../fonts');
+        if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../../fonts');
+
+        const sourceFontPath = path.join(systemFontDir, fontName);
+        const destFontPath = path.join(localFontDir, fontName);
+        if (fs.existsSync(sourceFontPath)) {
+            fs.copyFileSync(sourceFontPath, destFontPath);
+            const stats = fs.statSync(destFontPath);
+            console.log(`[Font] 成功尋獲並載入字體: ${fontName} (大小: ${(stats.size/1024/1024).toFixed(2)} MB)`);
+        } else {
+            console.warn(`[Font] ⚠️ 嚴重警告: 找不到字體檔案 ${fontName}！這將導致亂碼。搜索路徑: ${sourceFontPath}`);
+        }
+
+        // 強制洗腦的 fonts.conf：要求系統將所有字體請求，全部強制對應到我們挑選的字體！
         const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
         const fontsConfContent = `<?xml version="1.0"?>
         <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
         <fontconfig>
-          <dir>${fontsDir}</dir>
+          <dir>${localFontDir}</dir>
           <cachedir>${fontConfigDir}</cachedir>
           <match target="pattern">
-            <edit name="family" mode="append"><string>${selectedFontFamily}</string></edit>
+            <edit name="family" mode="assign" binding="strong"><string>${selectedFontFamily}</string></edit>
           </match>
         </fontconfig>`;
         fs.writeFileSync(fontsConfPath, fontsConfContent, 'utf8');
         
-        // 覆寫系統環境變數，讓 FFmpeg 的引擎強制讀取我們建立的索引
+        // 覆寫系統環境變數，讓 FFmpeg 服從新的字體庫
         process.env.FONTCONFIG_PATH = fontConfigDir;
         process.env.FONTCONFIG_FILE = fontsConfPath;
 
@@ -380,7 +396,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         }
 
         const assPathEscaped = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
-        const fontsDirEscaped = path.join(process.cwd(), 'fonts').replace(/\\/g, '/').replace(/:/g, '\\:');
+        const fontsDirEscaped = localFontDir.replace(/\\/g, '/').replace(/:/g, '\\:');
+        
+        // 🚀 將字體目錄明確傳遞給 FFmpeg
         filterComplex.push(`${vFinal}ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
 
         cmd.complexFilter(filterComplex)
