@@ -98,11 +98,9 @@ export class VideoAssembler {
       if (!folderId || folderId === 'FOLDER_ID_HERE') return '';
 
       try {
-          console.log(`[BGM API] 正在向 Google Drive 請求配樂列表 (Mood: ${mood})...`);
           const files = await this.getFilesInDriveFolder(folderId);
           if (files.length > 0) {
               const randomFile = files[Math.floor(Math.random() * files.length)];
-              console.log(`[BGM API] 成功選定配樂: ${randomFile.name} (${randomFile.id})`);
               return `https://drive.google.com/uc?export=download&id=${randomFile.id}`;
           }
       } catch (error) {
@@ -135,21 +133,14 @@ export class VideoAssembler {
 
     console.log(`Starting Asset Gathering... Mode: ${isSingleVideoMode ? 'HeyGen 一鏡到底' : '平行合成'}`);
 
-    // 1. Gather Assets (Audio & Video)
     if (isSingleVideoMode) {
         if (!preGeneratedHeygenUrl) throw new Error("系統錯誤：未收到預先生成的 HeyGen 影片網址！");
         
         singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
-        console.log(`[HeyGen] 接收到已渲染完成的影片 URL，直接下載至伺服器...`);
         await this.downloadFile(preGeneratedHeygenUrl, singleVideoPath);
         
         totalHeygenDuration = await this.getDuration(singleVideoPath);
-        if (totalHeygenDuration <= 0) {
-            console.warn(`[HeyGen] ⚠️ 讀取時長失敗，啟用預設備用時長 (50秒)`);
-            totalHeygenDuration = 50; 
-        } else {
-            console.log(`[HeyGen] 影片實體檔案下載成功！時長: ${totalHeygenDuration} 秒`);
-        }
+        if (totalHeygenDuration <= 0) totalHeygenDuration = 50; 
 
         const totalChars = script.scenes.map(s => s.narration.replace(/[\n\r\s]+/g, '')).join('').length;
         for (const scene of script.scenes) {
@@ -190,7 +181,6 @@ export class VideoAssembler {
         totalDuration = sceneAssets.reduce((sum, asset) => sum + asset.duration, 0);
     }
 
-    // 2. 字幕與時間軸處理 (ASS)
     const assPath = path.join(this.tempDir, 'subtitles.ass');
     let assEvents = '';
     let currentTime = 0;
@@ -282,37 +272,30 @@ Style: Default,${selectedFontFamily},${fontSize},${config?.subtitleColor ? hexTo
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
-    fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
+    
+    // 🚀 核心修復：拔除 BOM (\uFEFF)，讓字幕引擎乖乖讀檔
+    fs.writeFileSync(assPath, assHeader + assEvents, 'utf8');
 
-    // 3. 下載 BGM
     let bgmPath = '';
     if (bgmMood && bgmMood !== 'none') {
         const bgmUrl = await this.fetchDynamicBgm(bgmMood);
         if (bgmUrl) {
             bgmPath = path.join(this.tempDir, `bgm_${Date.now()}.mp3`);
             try { 
-                console.log(`[BGM] 開始將音樂檔案下載至伺服器...`);
                 await this.downloadFile(bgmUrl, bgmPath); 
-                console.log(`[BGM] 音樂檔案下載成功！`);
-            } 
-            catch (e: any) { 
-                console.warn(`[BGM] 音樂下載失敗: ${e.message}`); 
-                bgmPath = ''; 
-            }
+            } catch (e: any) { bgmPath = ''; }
         }
     }
 
-    // 4. 啟動 FFmpeg 終極渲染
     return new Promise((resolve, reject) => {
         console.log(`[FFmpeg] 引擎點火！開始進行影像、字幕與音樂的終極合成...`);
         
-        // 🚀 核心外掛：尋找字體檔案，並建立強制綁架的 Fontconfig
+        // 🚀 字體保險箱：確保字體檔案與配置乾淨無瑕
         const fontConfigDir = path.join(this.tempDir, 'fontconfig');
         const localFontDir = path.join(this.tempDir, 'fonts_cache');
         if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
         if (!fs.existsSync(localFontDir)) fs.mkdirSync(localFontDir, { recursive: true });
 
-        // Vercel 路徑地毯式搜索
         let systemFontDir = path.join(process.cwd(), 'fonts');
         if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../fonts');
         if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../../fonts');
@@ -321,26 +304,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const destFontPath = path.join(localFontDir, fontName);
         if (fs.existsSync(sourceFontPath)) {
             fs.copyFileSync(sourceFontPath, destFontPath);
-            const stats = fs.statSync(destFontPath);
-            console.log(`[Font] 成功尋獲並載入字體: ${fontName} (大小: ${(stats.size/1024/1024).toFixed(2)} MB)`);
-        } else {
-            console.warn(`[Font] ⚠️ 嚴重警告: 找不到字體檔案 ${fontName}！這將導致亂碼。搜索路徑: ${sourceFontPath}`);
+            console.log(`[Font] 成功尋獲並載入字體: ${fontName}`);
         }
 
-        // 強制洗腦的 fonts.conf：要求系統將所有字體請求，全部強制對應到我們挑選的字體！
+        // 最純淨的 fontconfig 設定檔，不帶任何引發崩潰的強制覆寫
         const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
         const fontsConfContent = `<?xml version="1.0"?>
-        <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
-        <fontconfig>
-          <dir>${localFontDir}</dir>
-          <cachedir>${fontConfigDir}</cachedir>
-          <match target="pattern">
-            <edit name="family" mode="assign" binding="strong"><string>${selectedFontFamily}</string></edit>
-          </match>
-        </fontconfig>`;
+<fontconfig>
+  <dir>${localFontDir}</dir>
+  <cachedir>${fontConfigDir}</cachedir>
+  <config></config>
+</fontconfig>`;
         fs.writeFileSync(fontsConfPath, fontsConfContent, 'utf8');
         
-        // 覆寫系統環境變數，讓 FFmpeg 服從新的字體庫
         process.env.FONTCONFIG_PATH = fontConfigDir;
         process.env.FONTCONFIG_FILE = fontsConfPath;
 
@@ -398,7 +374,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         const assPathEscaped = assPath.replace(/\\/g, '/').replace(/:/g, '\\:');
         const fontsDirEscaped = localFontDir.replace(/\\/g, '/').replace(/:/g, '\\:');
         
-        // 🚀 將字體目錄明確傳遞給 FFmpeg
         filterComplex.push(`${vFinal}ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
 
         cmd.complexFilter(filterComplex)
