@@ -79,7 +79,14 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       reader.readAsDataURL(file);
     }
   };
-
+  // 🚀 新增：允許使用者手動修改腳本的函式
+  const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
+    if (!script) return;
+    const updatedScenes = script.scenes.map(scene => 
+        scene.id === id ? { ...scene, [field]: value } : scene
+    );
+    setScript({ ...script, scenes: updatedScenes });
+  };
   const generateScript = async () => {
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
