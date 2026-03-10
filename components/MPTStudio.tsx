@@ -20,9 +20,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     subtitleColor: '#FFFF00',
     ttsEngine: 'edge' as 'edge' | 'elevenlabs',
     voiceId: 'zh-TW-HsiaoChenNeural', 
-    videoEngine: 'veo' as 'veo' | 'sora' | 'jimeng' | 'heygen',
+    videoEngine: 'veo' as 'veo' | 'kling' | 'jimeng' | 'heygen',
     heygenAvatarId: '',
     avatarScale: 1.0, 
+    klingModelVersion: 'kling-3.0',
     targetDuration: '60', 
     useStockFootage: true,
     fontName: 'NotoSansTC-Bold.ttf',
@@ -106,7 +107,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     finally { setLoading(false); }
   };
 
-  // 🚀 新增：允許使用者手動修改腳本的函式
   const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
     if (!script) return;
     const updatedScenes = script.scenes.map(scene => 
@@ -170,7 +170,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               await new Promise(resolve => setTimeout(resolve, 10000));
           }
       } else {
-          setLog('🎥 啟動逐幕分散運算 (包含防 429 頻率限制的冷卻機制)...');
+          setLog(`🎥 啟動逐幕分散運算 (防 429 頻率限制保護機制)...`);
           for (let i = 0; i < script.scenes.length; i++) {
               const scene = script.scenes[i];
               setLog(`⏳ 正在運算第 ${i+1}/${script.scenes.length} 幕畫面...`);
@@ -185,6 +185,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       isFirstSceneWithProduct,
                       useStockFootage: config.useStockFootage,
                       videoEngine: config.videoEngine,
+                      klingModelVersion: config.klingModelVersion,
                       referenceImage: referenceImage || script.referenceImage 
                   })
               }).then(r => r.json());
@@ -195,7 +196,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   throw new Error(`場景 ${scene.id} 生成失敗: ${sceneRes.error}`);
               }
 
-              // 🚀 核心修復：如果不是最後一幕，強制進入冷卻時間，避免觸發 Google 429 錯誤！
               if (i < script.scenes.length - 1 && config.videoEngine === 'veo') {
                   setLog(`🛡️ [防護機制] 進入冷卻時間 30 秒，保護 Veo API 額度...`);
                   await new Promise(resolve => setTimeout(resolve, 30000));
@@ -311,7 +311,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 )}
               </div>
 
-              {/* 👉 時長選擇區塊 */}
               <div className="mb-4">
                   <label className="text-xs font-bold text-zinc-400 uppercase block mb-2">影片目標時長</label>
                   <select value={config.targetDuration} onChange={e => setConfig({...config, targetDuration: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded-lg text-sm text-white outline-none">
@@ -320,7 +319,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   </select>
               </div>
 
-              {/* Image Upload Section */}
               <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
                   <label className="text-xs font-bold text-zinc-400 uppercase block mb-3">參考圖片 (Image-to-Video)</label>
                   <div className="flex items-center gap-4">
@@ -332,17 +330,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       {referenceImage ? (
                           <div className="relative group w-16 h-16 shrink-0">
                               <img src={referenceImage} alt="Preview" className="w-full h-full object-cover rounded-md border border-zinc-600" />
-                              <button 
-                                  onClick={() => setReferenceImage(null)}
-                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-md"
-                              >
-                                  ×
-                              </button>
+                              <button onClick={() => setReferenceImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-md">×</button>
                           </div>
                       ) : (
-                          <span className="text-[10px] text-zinc-500 italic">
-                              上傳產品/場景圖，AI 將根據圖片生成腳本與影片
-                          </span>
+                          <span className="text-[10px] text-zinc-500 italic">上傳產品/場景圖，AI 將根據圖片生成腳本與影片</span>
                       )}
                   </div>
               </div>
@@ -363,43 +354,35 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div>
                 <label className="text-xs text-purple-400 block mb-1 font-bold">影像生成引擎</label>
                 <select value={config.videoEngine} onChange={(e) => setConfig({...config, videoEngine: e.target.value as any})} className="w-full bg-black border border-purple-500/30 rounded-lg p-2 text-sm text-white focus:border-purple-500 outline-none">
-                  <option value="veo">Google Veo 3.1</option>
-                  <option value="sora">OpenAI Sora 2.0</option>
+                  <option value="veo">Google Veo 2.0 (電影級)</option>
+                  <option value="kling">Kling AI (可靈 - 透過 Kie.ai)</option>
                   <option value="jimeng">Jimeng</option>
                   <option value="heygen">HeyGen (數位人)</option>
                 </select>
                 
-                {/* 👉 HeyGen 專屬動態輸入框與畫面控制 */}
+                {/* 🚀 Kling 專屬設定區塊 */}
+                {config.videoEngine === 'kling' && (
+                   <div className="animate-fade-in mt-2 p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-lg space-y-4">
+                     <div>
+                         <label className="text-xs text-emerald-400 block mb-1 font-bold">Kling 模型等級 (Kie.ai)</label>
+                         <select value={config.klingModelVersion} onChange={e => setConfig({...config, klingModelVersion: e.target.value})} className="w-full bg-black border border-emerald-500/50 p-2 rounded-lg text-sm text-white outline-none">
+                             <option value="kling-3.0">Kling 3.0 (最新旗艦版 - 最精準)</option>
+                             <option value="kling-2.6-pro">Kling 2.6 Pro (高畫質精準版)</option>
+                             <option value="kling-2.5-turbo">Kling 2.5 Turbo (極速高 CP 值)</option>
+                         </select>
+                     </div>
+                   </div>
+                )}
+                
                 {config.videoEngine === 'heygen' && (
                    <div className="animate-fade-in mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg space-y-4">
-                     {/* 群組盲抽輸入框 */}
                      <div>
-                         <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar / Group ID (支援群組盲抽)</label>
-                         <input 
-                            type="text" 
-                            value={config.heygenAvatarId} 
-                            onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} 
-                            placeholder="輸入 Group ID 或 Avatar ID..." 
-                            className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" 
-                         />
-                         <p className="text-[10px] text-indigo-300 mt-1">
-                            ✨ 系統超智慧：輸入 Group ID 會自動列出底下所有 Looks 進行隨機盲抽換裝！也可以單純輸入單一 ID 喔。
-                         </p>
+                         <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar / Group ID</label>
+                         <input type="text" value={config.heygenAvatarId} onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} placeholder="輸入 Group ID 或 Avatar ID..." className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" />
                      </div>
-
-                     {/* 畫面縮放控制區塊 (解決白邊) */}
                      <div>
-                         <label className="text-xs text-indigo-400 block mb-1 font-bold">畫面放大比例 (去白邊): {config.avatarScale.toFixed(1)}x</label>
-                         <input 
-                            type="range" 
-                            min="1" 
-                            max="2.5" 
-                            step="0.1" 
-                            value={config.avatarScale} 
-                            onChange={e => setConfig({...config, avatarScale: parseFloat(e.target.value)})} 
-                            className="w-full" 
-                         />
-                         <p className="text-[10px] text-indigo-300 mt-1">若橫式影片上下有白邊，請調大數值放大畫面 (建議 1.5 ~ 1.8)</p>
+                         <label className="text-xs text-indigo-400 block mb-1 font-bold">畫面放大比例: {config.avatarScale.toFixed(1)}x</label>
+                         <input type="range" min="1" max="2.5" step="0.1" value={config.avatarScale} onChange={e => setConfig({...config, avatarScale: parseFloat(e.target.value)})} className="w-full" />
                      </div>
                    </div>
                 )}
@@ -407,7 +390,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
               <div className="border-t border-zinc-800 my-4 pt-4"></div>
 
-              {/* 👉 配音引擎與聲線選擇 */}
               <div>
                   <label className="text-xs text-zinc-400 block mb-1 font-bold">配音引擎</label>
                   <div className="flex bg-black rounded-lg p-1 border border-zinc-800 mb-2">
@@ -419,19 +401,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       {config.ttsEngine === 'elevenlabs' ? 'Voice ID (請輸入)' : '語音聲線 (請選擇)'}
                   </label>
                   {config.ttsEngine === 'elevenlabs' ? (
-                      <input 
-                          type="text" 
-                          value={config.voiceId} 
-                          onChange={e => setConfig({...config, voiceId: e.target.value})} 
-                          placeholder="例如: Puck 或 21m00Tcm4..." 
-                          className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none" 
-                      />
+                      <input type="text" value={config.voiceId} onChange={e => setConfig({...config, voiceId: e.target.value})} placeholder="例如: Puck..." className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none" />
                   ) : (
-                      <select 
-                          value={config.voiceId} 
-                          onChange={e => setConfig({...config, voiceId: e.target.value})} 
-                          className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none"
-                      >
+                      <select value={config.voiceId} onChange={e => setConfig({...config, voiceId: e.target.value})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
                           <option value="zh-TW-HsiaoChenNeural">曉辰 (台灣女聲)</option>
                           <option value="zh-TW-YunJheNeural">允哲 (台灣男聲)</option>
                           <option value="zh-TW-HsiaoYuNeural">曉雨 (台灣女聲)</option>
@@ -441,7 +413,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
               <div className="border-t border-zinc-800 my-4 pt-4"></div>
 
-              {/* 🚀 數值完美回歸區塊 */}
               <div>
                 <label className="text-xs text-zinc-400 block mb-1">背景音樂音量 ({config.bgmVolume})</label>
                 <input type="range" min="0" max="1" step="0.1" value={config.bgmVolume} onChange={(e) => setConfig({...config, bgmVolume: parseFloat(e.target.value)})} className="w-full" />
@@ -455,12 +426,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 <label className="text-xs text-zinc-400 block mb-1">字幕顏色</label>
                 <div className="flex gap-2">
                     {['#FFFF00', '#FFFFFF', '#00FFFF', '#FF00FF', '#00FF00'].map(color => (
-                        <button 
-                            key={color}
-                            onClick={() => setConfig({...config, subtitleColor: color})}
-                            className={`w-6 h-6 rounded-full border-2 ${config.subtitleColor === color ? 'border-white' : 'border-transparent'}`}
-                            style={{ backgroundColor: color }}
-                        />
+                        <button key={color} onClick={() => setConfig({...config, subtitleColor: color})} className={`w-6 h-6 rounded-full border-2 ${config.subtitleColor === color ? 'border-white' : 'border-transparent'}`} style={{ backgroundColor: color }} />
                     ))}
                 </div>
               </div>
@@ -512,7 +478,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                     <div key={scene.id} className="p-4 bg-black/40 rounded-xl border border-zinc-800 space-y-3">
                       <div className="text-xs font-mono text-zinc-500">場景 {scene.id}</div>
                       
-                      {/* 🚀 改成可編輯的輸入框 */}
                       <div>
                           <label className="text-[10px] text-zinc-500 font-bold mb-1 block">配音台詞 (Narration)</label>
                           <textarea 
@@ -523,7 +488,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                           />
                       </div>
 
-                      {/* 🚀 畫面提示詞也改成可編輯 */}
                       <div>
                           <label className="text-[10px] text-emerald-600 font-bold mb-1 block flex items-center gap-1">👁️ 畫面提示詞 (Visual Cue)</label>
                           <textarea 
@@ -545,11 +509,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 min-h-[400px] flex flex-col items-center justify-center relative">
               {videoUrl ? (
                 <div className="w-full space-y-4">
-                  {/* 影片播放器保持乾淨 */}
                   <div className="w-full aspect-[9/16] bg-black rounded-lg overflow-hidden relative">
                     <video src={videoUrl} controls className="w-full h-full object-contain" autoPlay loop />
                   </div>
-                  {/* 👉 獨立的巨型下載按鈕，移到播放器下方 */}
                   <button onClick={handleDownload} className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold transition flex items-center justify-center gap-2 border border-zinc-700 shadow-lg">
                     ⬇️ 下載最終影片檔案
                   </button>
@@ -569,11 +531,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                         <div className="flex gap-4 mb-6">
                             {['youtube', 'instagram', 'facebook'].map(platform => (
                                 <label key={platform} className="flex items-center gap-2 cursor-pointer">
-                                    <input 
-                                        type="checkbox" 
-                                        checked={uploadTargets.includes(platform)}
-                                        onChange={e => e.target.checked ? setUploadTargets([...uploadTargets, platform]) : setUploadTargets(uploadTargets.filter(t => t !== platform))}
-                                    />
+                                    <input type="checkbox" checked={uploadTargets.includes(platform)} onChange={e => e.target.checked ? setUploadTargets([...uploadTargets, platform]) : setUploadTargets(uploadTargets.filter(t => t !== platform))} />
                                     <span className="text-sm font-bold capitalize">{platform}</span>
                                 </label>
                             ))}
