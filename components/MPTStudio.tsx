@@ -170,10 +170,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               await new Promise(resolve => setTimeout(resolve, 10000));
           }
       } else {
-          setLog('啟動逐幕分散運算 (避免雲端超時)...');
+          setLog('🎥 啟動逐幕分散運算 (包含防 429 頻率限制的冷卻機制)...');
           for (let i = 0; i < script.scenes.length; i++) {
               const scene = script.scenes[i];
-              setLog(`正在運算第 ${i+1}/${script.scenes.length} 幕畫面...`);
+              setLog(`⏳ 正在運算第 ${i+1}/${script.scenes.length} 幕畫面...`);
               
               const isFirstSceneWithProduct = !!referenceImage && scene.id === 1;
               const sceneRes = await fetch('/api/pipeline', {
@@ -193,6 +193,12 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   preGeneratedSceneUrls[scene.id] = sceneRes.videoUrl;
               } else {
                   throw new Error(`場景 ${scene.id} 生成失敗: ${sceneRes.error}`);
+              }
+
+              // 🚀 核心修復：如果不是最後一幕，強制進入冷卻時間，避免觸發 Google 429 錯誤！
+              if (i < script.scenes.length - 1 && config.videoEngine === 'veo') {
+                  setLog(`🛡️ [防護機制] 進入冷卻時間 30 秒，保護 Veo API 額度...`);
+                  await new Promise(resolve => setTimeout(resolve, 30000));
               }
           }
       }
