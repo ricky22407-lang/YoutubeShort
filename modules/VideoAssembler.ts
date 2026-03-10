@@ -48,11 +48,10 @@ export class VideoAssembler {
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) throw new Error(`Failed to download ${url}: ${res.statusText}`);
+        if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
         const fileStream = fs.createWriteStream(dest);
         await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
     } catch (e: any) {
-        if (e.name === 'AbortError') throw new Error("下載超時 (Timeout)");
         throw e;
     } finally {
         clearTimeout(timeoutId);
@@ -96,6 +95,7 @@ export class VideoAssembler {
     let singleVideoPath = '';
     let totalHeygenDuration = 0;
 
+    // 🚀 新版日誌：如果正確部署，Log 會顯示 "前端排程合成"
     console.log(`Starting Asset Gathering... Mode: ${isSingleVideoMode ? 'HeyGen 一鏡到底' : '前端排程合成'}`);
 
     if (isSingleVideoMode) {
@@ -132,17 +132,10 @@ export class VideoAssembler {
                         console.log(`[Assembler] 下載預先生成的場景 ${sceneId} 影片...`);
                         await this.downloadFile(url, videoPath);
                     } else {
-                        await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
+                        await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath);
                     }
                 } else {
-                    const isFirstSceneWithProduct = script.referenceImage && scene.id === 1;
-                    if (useStockFootage && !isFirstSceneWithProduct) {
-                        const videoUrls = await searchVideos(scene.visual_cue, this.pexelsApiKey);
-                        if (videoUrls.length > 0) await this.downloadFile(videoUrls[0], videoPath);
-                        else await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
-                    } else {
-                        await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath, characterProfile, script.referenceImage);
-                    }
+                    await this.generateAiVideo(scene.visual_cue, videoEngine as any, videoPath);
                 }
             }
             
@@ -258,10 +251,10 @@ export class VideoAssembler {
     });
   }
 
-  private async generateAiVideo(prompt: string, engine: any, outputPath: string, characterProfile?: any, referenceImage?: string): Promise<void> {
+  private async generateAiVideo(prompt: string, engine: any, outputPath: string): Promise<void> {
       return new Promise((resolve, reject) => {
           ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5)
-            .videoFilters([`drawtext=text='${engine.toUpperCase()} SIMULATION':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`])
+            .videoFilters([`drawtext=text='SIMULATION':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`])
             .output(outputPath).on('end', () => resolve()).on('error', reject).run();
       });
   }
