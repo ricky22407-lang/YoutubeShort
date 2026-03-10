@@ -135,40 +135,83 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
   const renderVideo = async () => {
     if (!script) return;
-    if (config.videoEngine === 'heygen' && !config.heygenAvatarId) { setLog("⚠️ 請填寫 Avatar ID！"); return; }
+    if (config.videoEngine === 'heygen' && !config.heygenAvatarId) { setLog("⚠️ 請填寫 HeyGen Avatar ID！"); return; }
 
     setLoading(true);
-    setLog(`正在準備環境 (模式: ${config.videoEngine})...`);
+    setLog(`🎬 啟動渲染引擎 (核心: ${config.videoEngine.toUpperCase()})...`);
     const tempChannel = { ...channel, mptConfig: config, uploadTargets: [] };
 
     try {
       let finalHeygenUrl = undefined;
+      let preGeneratedSceneUrls: Record<number, string> = {};
+
       if (config.videoEngine === 'heygen' && config.heygenAvatarId) {
-          setLog('正在提交 HeyGen 渲染任務...'); 
-          const submitRes = await fetch('/api/pipeline', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ stage: 'heygen_submit', channel: tempChannel, scriptData: script })
-          }).then(r => r.json());
+          setLog('📦 正在向 HeyGen 雲端派發任務...'); 
+          const submitRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_submit', channel: tempChannel, scriptData: script }) }).then(r => r.json());
+          if (!submitRes.success) throw new Error(submitRes.error || "提交任務失敗");
           
-          if (!submitRes.success) throw new Error(submitRes.error || "提交失敗");
-          
-          setLog('HeyGen 雲端算圖中 (預計 3~5 分鐘，前 3 分鐘系統將暫停連線以節省資源)...');
+          setLog('☁️ HeyGen 雲端算圖中 (為節省資源，系統進入 3 分鐘深眠等待)...');
           await new Promise(resolve => setTimeout(resolve, 180000)); 
           
-          setLog('正在確認進度...');
+          setLog('🔍 正在掃描 HeyGen 渲染進度...');
           while (true) {
-              const statusRes = await fetch('/api/pipeline', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ stage: 'heygen_status', videoId: submitRes.videoId })
-              }).then(r => r.json());
-              
+              const statusRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_status', videoId: submitRes.videoId }) }).then(r => r.json());
               if (statusRes.status === 'completed') { finalHeygenUrl = statusRes.videoUrl; break; } 
-              else if (statusRes.status === 'failed' || statusRes.status === 'error') { throw new Error("渲染失敗。"); }
+              else if (statusRes.status === 'failed' || statusRes.status === 'error') { throw new Error("HeyGen 渲染被拒絕或失敗。"); }
               await new Promise(resolve => setTimeout(resolve, 10000));
           }
+      } else {
+          // 🚀 核心升級：前端指揮官模式，逐幕派發微服務請求，完美擊破 300 秒 Timeout 限制！
+          setLog('🎥 為了突破雲端 5 分鐘限制，啟動逐幕分散運算...');
+          for (let i = 0; i < script.scenes.length; i++) {
+              const scene = script.scenes[i];
+              setLog(`⏳ 正在運算第 ${i+1}/${script.scenes.length} 幕畫面 (約 40 秒)...`);
+              
+              const isFirstSceneWithProduct = !!referenceImage && scene.id === 1;
+              const sceneRes = await fetch('/api/pipeline', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                      stage: 'generate_single_video', 
+                      visualCue: scene.visual_cue,
+                      isFirstSceneWithProduct,
+                      useStockFootage: config.useStockFootage,
+                      videoEngine: config.videoEngine,
+                      referenceImage: referenceImage || script.referenceImage 
+                  })
+              }).then(r => r.json());
+
+              if (sceneRes.success) {
+                  preGeneratedSceneUrls[scene.id] = sceneRes.videoUrl;
+              } else {
+                  throw new Error(`場景 ${scene.id} 畫面生成失敗: ${sceneRes.error}`);
+              }
+          }
+          setLog('✅ 所有場景畫面素材準備完畢！');
       }
+
+      setLog('✨ 正在進行終極影像、音樂與字幕合成 (約 10 秒)...');
+      const res = await fetch('/api/pipeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            stage: 'render_mpt', 
+            channel: tempChannel, 
+            scriptData: { ...script, referenceImage: referenceImage || script.referenceImage },
+            previousVideoUrl: videoUrl,
+            preGeneratedHeygenUrl: finalHeygenUrl,
+            preGeneratedSceneUrls // 將準備好的素材交給組裝器
+        })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        setVideoUrl(data.videoUrl);
+        setLog("🎉 渲染大功告成！請在右側預覽您的作品。");
+      } else setLog("❌ 合成錯誤: " + data.error);
+    } catch (e: any) { setLog("❌ 系統錯誤: " + e.message); } 
+    finally { setLoading(false); }
+  };
 
       setLog('正在合成最終影片與字幕...');
       const res = await fetch('/api/pipeline', {
