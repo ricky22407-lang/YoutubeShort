@@ -3,6 +3,7 @@ import { Buffer } from 'buffer';
 import { ScriptGenerator } from '../modules/ScriptGenerator.js';
 import { VideoAssembler } from '../modules/VideoAssembler.js';
 import { HeyGenService } from '../modules/HeyGenService.js';
+import { searchVideos } from '../services/pexelsService.js'; // 👈 新增引入
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -15,26 +16,6 @@ export const config = {
 function cleanJson(text: string): string {
   if (!text) return '{}';
   return text.replace(/```json/g, '').replace(/```/g, '').trim();
-}
-
-async function refreshAccessToken(refreshToken: string) {
-  const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-  const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-  
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: CLIENT_ID!,
-      client_secret: CLIENT_SECRET!,
-      refresh_token: refreshToken,
-      grant_type: 'refresh_token',
-    }),
-  });
-
-  const data = await response.json();
-  if (data.error) throw new Error(`Token 刷新失敗: ${data.error_description || data.error}`);
-  return data;
 }
 
 export default async function handler(req: any, res: any) {
@@ -79,21 +60,13 @@ export default async function handler(req: any, res: any) {
 
         if (heygenIdInput.includes(',')) {
             finalAvatarIds = heygenIdInput.split(',').map((id: string) => id.trim()).filter((id: string) => id.length > 0);
-            console.log(`[HeyGen] 偵測到手動多重 ID，共 ${finalAvatarIds.length} 個`);
         } else {
             const groupLooks = await heyGen.getAvatarGroupLooks(heygenIdInput);
-            if (groupLooks.length > 0) {
-                finalAvatarIds = groupLooks;
-                console.log(`[HeyGen] 🎯 成功從 Avatar Group 獲取 ${groupLooks.length} 個 Looks！`);
-            } else {
-                finalAvatarIds = [heygenIdInput];
-                console.log(`[HeyGen] 偵測為單一 Avatar ID`);
-            }
+            if (groupLooks.length > 0) finalAvatarIds = groupLooks;
+            else finalAvatarIds = [heygenIdInput];
         }
         
         const selectedAvatarId = finalAvatarIds[Math.floor(Math.random() * finalAvatarIds.length)];
-        console.log(`[HeyGen] 本次幸運抽選的 Avatar ID: ${selectedAvatarId}`);
-
         const scale = channel.mptConfig?.avatarScale || 1.0;
         const videoId = await heyGen.submitVideoTask(fullText, selectedAvatarId, voiceId, scale);
         
@@ -106,8 +79,61 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, status: result.status, videoUrl: result.url });
       }
 
+      // 🚀 新增微服務：單幕畫面生成器，徹底避開 Vercel 300秒限制
+      case 'generate_single_video': {
+        const { visualCue, isFirstSceneWithProduct, useStockFootage, videoEngine, referenceImage } = req.body;
+        let finalUrl = '';
+        const tryPexels = useStockFootage && !isFirstSceneWithProduct;
+        let pexelsSuccess = false;
+        
+        if (tryPexels && PEXELS_API_KEY) {
+            const videoUrls = await searchVideos(visualCue, PEXELS_API_KEY);
+            if (videoUrls.length > 0) {
+                finalUrl = videoUrls[0];
+                pexelsSuccess = true;
+                console.log(`[API] 場景採用 Pexels 素材`);
+            }
+        }
+        
+        if (!pexelsSuccess) {
+            console.log(`[API] 獨立生成 AI 場景 (引擎: ${videoEngine})...`);
+            if (videoEngine === 'veo') {
+                let imageInput = undefined;
+                if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
+                    const match = referenceImage.match(/^data:(.+);base64,(.+)$/);
+                    if (match) imageInput = { mimeType: match[1], imageBytes: match[2] };
+                }
+                
+                let operation = await ai.models.generateVideos({
+                    model: 'veo-3.1-fast-generate-preview',
+                    prompt: visualCue,
+                    image: imageInput,
+                    config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
+                });
+
+                let attempts = 0;
+                while (!operation.done && attempts < 30) { 
+                    await new Promise(r => setTimeout(r, 5000));
+                    operation = await ai.operations.getVideosOperation({ operation });
+                    attempts++;
+                }
+
+                if (!operation.done || !operation.response?.generatedVideos?.[0]?.video?.uri) {
+                    return res.status(500).json({ success: false, error: "AI 生成超時" });
+                }
+                
+                // 直接回傳 Google API 影片位置 (附帶金鑰)，省去下載上傳的時間
+                const videoUri = operation.response.generatedVideos[0].video.uri;
+                finalUrl = `${videoUri}&key=${API_KEY}`;
+            } else {
+                finalUrl = 'mock'; 
+            }
+        }
+        
+        return res.status(200).json({ success: true, videoUrl: finalUrl });
+      }
+
       case 'suggest_topics': {
-        console.log("[API] 收到 AI 靈感生成請求...");
         const prompt = `
             Generate 5 viral YouTube Shorts topic ideas for this channel.
             Channel Niche: ${channel.niche}
@@ -118,19 +144,13 @@ export default async function handler(req: any, res: any) {
         
         try {
             const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview', // 🚀 修復：使用確定有效的模型
+                model: 'gemini-3-flash-preview',
                 contents: prompt,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: { type: "ARRAY", items: { type: "STRING" } }
-                }
+                config: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "STRING" } } }
             });
-            const resultText = response.text || '[]';
-            console.log("[API] AI 靈感生成完成:", resultText);
-            const topics = JSON.parse(cleanJson(resultText));
+            const topics = JSON.parse(cleanJson(response.text || '[]'));
             return res.status(200).json({ success: true, topics });
         } catch (error: any) {
-            console.error("[API] AI 靈感生成錯誤:", error);
             return res.status(200).json({ success: false, error: error.message });
         }
       }
@@ -138,13 +158,9 @@ export default async function handler(req: any, res: any) {
       case 'generate_script': {
         const generator = new ScriptGenerator(API_KEY);
         const targetDuration = req.body.targetDuration || '60';
-        const durationPrompt = targetDuration === '30' 
-            ? "\n【極重要】腳本總時長必須嚴格控制在 30 秒以內！總字數請限制在 80~100 字左右，節奏要極快。" 
-            : "\n【極重要】腳本總時長必須嚴格控制在 60 秒以內！總字數請限制在 150~180 字左右。";
-        
+        const durationPrompt = targetDuration === '30' ? "\n【極重要】腳本總時長必須嚴格控制在 30 秒以內！總字數請限制在 80~100 字左右，節奏要極快。" : "\n【極重要】腳本總時長必須嚴格控制在 60 秒以內！總字數請限制在 150~180 字左右。";
         const topicToUse = (req.body.topic || channel.niche) + durationPrompt;
-        const referenceImage = req.body.referenceImage; 
-        const script = await generator.generate(topicToUse, channel.language || 'zh-TW', referenceImage);
+        const script = await generator.generate(topicToUse, channel.language || 'zh-TW', req.body.referenceImage);
         return res.status(200).json({ success: true, script });
       }
 
@@ -160,7 +176,8 @@ export default async function handler(req: any, res: any) {
             if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
                 try { await del(previousVideoUrl); } catch (e) {}
             }
-            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl);
+            // 🚀 核心更新：將前端收集到的「單幕影片網址陣列 (preGeneratedSceneUrls)」傳入組裝器
+            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl, req.body.preGeneratedSceneUrls);
             const videoBuffer = fs.readFileSync(outputFilename);
             const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
             return res.status(200).json({ success: true, videoUrl: blob.url });
@@ -170,55 +187,28 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'analyze': {
-        console.log("[API] 收到影片分析請求...");
-        let promptContext = "";
-        let visualStyleOverride = "";
-        
-        if (channel.mode === 'character' && channel.characterProfile) {
-           promptContext = `
-             === AGENT MODE ACTIVE ===
-             You are acting as the AI Virtual Idol "${channel.characterProfile.name}".
-             Persona: ${channel.characterProfile.description}.
-           `;
-           visualStyleOverride = "Visual Style: Shot on iPhone 15 Pro, vertical vlog format.";
-        } else {
-           promptContext = `Target Niche: ${channel.niche}. Concept: ${channel.concept}`;
-           visualStyleOverride = "Visual Style: Cinematic, High Production Value, 4k, Arri Alexa.";
-        }
-
-        const targetLang = channel.language === 'en' ? 'English' : 'Traditional Chinese (zh-TW)';
-        const analysisParams = {
-          contents: `
-          ${promptContext}
-          TASK: Create a viral strategy for a YouTube Shorts video.
-          Output Language: ${targetLang}.
-          ${visualStyleOverride}
-          Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
-          config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "OBJECT",
-              properties: {
-                prompt: { type: "STRING" },
-                title: { type: "STRING" },
-                desc: { type: "STRING" },
-                strategy_note: { type: "STRING" }
-              },
-              required: ["prompt", "title", "desc", "strategy_note"]
-            }
-          }
-        };
+        let promptContext = channel.mode === 'character' && channel.characterProfile 
+           ? `=== AGENT MODE ACTIVE ===\nYou are acting as the AI Virtual Idol "${channel.characterProfile.name}".\nPersona: ${channel.characterProfile.description}.` 
+           : `Target Niche: ${channel.niche}. Concept: ${channel.concept}`;
 
         try {
             const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview', // 🚀 修復：使用確定有效的模型
-                ...analysisParams
+                model: 'gemini-3-flash-preview',
+                contents: `
+                ${promptContext}
+                TASK: Create a viral strategy for a YouTube Shorts video.
+                Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: { prompt: { type: "STRING" }, title: { type: "STRING" }, desc: { type: "STRING" }, strategy_note: { type: "STRING" } },
+                        required: ["prompt", "title", "desc", "strategy_note"]
+                    }
+                }
             });
-            const resultText = response.text || '{}';
-            console.log("[API] 影片分析完成");
-            return res.status(200).json({ success: true, metadata: JSON.parse(cleanJson(resultText)) });
+            return res.status(200).json({ success: true, metadata: JSON.parse(cleanJson(response.text || '{}')) });
         } catch (err: any) {
-            console.error("[API] 影片分析錯誤:", err);
             return res.status(200).json({ success: false, error: err.message });
         }
       }
