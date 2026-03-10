@@ -79,14 +79,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       reader.readAsDataURL(file);
     }
   };
-  // 🚀 新增：允許使用者手動修改腳本的函式
-  const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
-    if (!script) return;
-    const updatedScenes = script.scenes.map(scene => 
-        scene.id === id ? { ...scene, [field]: value } : scene
-    );
-    setScript({ ...script, scenes: updatedScenes });
-  };
+
   const generateScript = async () => {
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
@@ -107,10 +100,19 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       const data = await res.json();
       if (data.success) {
         setScript(data.script);
-        setLog(`腳本生成完畢！共 ${data.script.scenes.length} 個場景。`);
+        setLog(`腳本生成完畢！共 ${data.script.scenes.length} 個場景。您可以直接修改文字！`);
       } else setLog("錯誤: " + data.error);
     } catch (e: any) { setLog("錯誤: " + e.message); } 
     finally { setLoading(false); }
+  };
+
+  // 🚀 新增：允許使用者手動修改腳本的函式
+  const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
+    if (!script) return;
+    const updatedScenes = script.scenes.map(scene => 
+        scene.id === id ? { ...scene, [field]: value } : scene
+    );
+    setScript({ ...script, scenes: updatedScenes });
   };
 
   const uploadToPlatform = async (platform: string, videoDataUri: string, metadata: any) => {
@@ -140,7 +142,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       }
   };
 
-  // 🚀 保留防超時的前端排隊機制，但使用舊版的 Log 文字風格
   const renderVideo = async () => {
     if (!script) return;
     if (config.videoEngine === 'heygen' && !config.heygenAvatarId) { setLog("⚠️ 請填寫 Avatar ID！"); return; }
@@ -502,10 +503,30 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 )}
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2">
                   {script.scenes.map((scene) => (
-                    <div key={scene.id} className="p-4 bg-black/40 rounded-xl border border-zinc-800">
-                      <div className="text-xs font-mono text-zinc-500 mb-2">場景 {scene.id}</div>
-                      <p className="text-sm text-zinc-300 mb-2">"{scene.narration}"</p>
-                      <div className="text-xs text-emerald-400 bg-emerald-950/30 px-2 py-1 rounded w-fit">👁️ {scene.visual_cue}</div>
+                    <div key={scene.id} className="p-4 bg-black/40 rounded-xl border border-zinc-800 space-y-3">
+                      <div className="text-xs font-mono text-zinc-500">場景 {scene.id}</div>
+                      
+                      {/* 🚀 改成可編輯的輸入框 */}
+                      <div>
+                          <label className="text-[10px] text-zinc-500 font-bold mb-1 block">配音台詞 (Narration)</label>
+                          <textarea 
+                              value={scene.narration}
+                              onChange={(e) => handleSceneChange(scene.id, 'narration', e.target.value)}
+                              className="w-full bg-zinc-900/50 border border-zinc-700/50 p-2 rounded-lg text-sm text-zinc-300 outline-none focus:border-indigo-500 transition-colors resize-none"
+                              rows={2}
+                          />
+                      </div>
+
+                      {/* 🚀 畫面提示詞也改成可編輯 */}
+                      <div>
+                          <label className="text-[10px] text-emerald-600 font-bold mb-1 block flex items-center gap-1">👁️ 畫面提示詞 (Visual Cue)</label>
+                          <textarea 
+                              value={scene.visual_cue}
+                              onChange={(e) => handleSceneChange(scene.id, 'visual_cue', e.target.value)}
+                              className="w-full bg-emerald-950/20 border border-emerald-900/30 p-2 rounded-lg text-xs text-emerald-400 outline-none focus:border-emerald-500 transition-colors resize-none"
+                              rows={3}
+                          />
+                      </div>
                     </div>
                   ))}
                 </div>
