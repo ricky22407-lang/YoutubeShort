@@ -13,6 +13,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [log, setLog] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
+  
+  // 🚀 新增產品描述的 State
+  const [productDescription, setProductDescription] = useState<string>("");
 
   const [config, setConfig] = useState({
     bgmVolume: 0.1,
@@ -20,7 +23,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     subtitleColor: '#FFFF00',
     ttsEngine: 'edge' as 'edge' | 'elevenlabs',
     voiceId: 'zh-TW-HsiaoChenNeural', 
-    videoEngine: 'veo' as 'veo' | 'kling' | 'jimeng' | 'heygen',
+    videoEngine: 'kling' as 'veo' | 'kling' | 'jimeng' | 'heygen', // 預設改為 kling 追求精準
     heygenAvatarId: '',
     avatarScale: 1.0, 
     klingModelVersion: 'kling-3.0',
@@ -75,7 +78,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       const reader = new FileReader();
       reader.onloadend = () => {
         setReferenceImage(reader.result as string);
-        setLog("圖片已載入，將用於生成腳本與影片。");
+        setLog("✅ 圖片已載入，請記得填寫下方的產品外觀防呆描述！");
       };
       reader.readAsDataURL(file);
     }
@@ -95,7 +98,8 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             channel,
             topic: finalTopic,
             targetDuration: config.targetDuration,
-            referenceImage
+            referenceImage,
+            productDescription // 🚀 將產品防呆描述一起送出
         })
       });
       const data = await res.json();
@@ -124,22 +128,14 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               body: JSON.stringify({
                   videoUrl: videoDataUri,
                   auth: channel.auth, 
-                  metadata: {
-                      title: metadata.title,
-                      desc: metadata.description
-                  },
+                  metadata: { title: metadata.title, desc: metadata.description },
                   platform
               })
           });
           const data = await res.json();
-          if (data.success) {
-              setLog(`✅ 已上傳至 ${platform}: ${data.url || data.videoId}`);
-          } else {
-              setLog(`❌ 上傳失敗至 ${platform}: ${data.error}`);
-          }
-      } catch (e: any) {
-          setLog(`❌ 上傳錯誤至 ${platform}: ${e.message}`);
-      }
+          if (data.success) setLog(`✅ 已上傳至 ${platform}: ${data.url || data.videoId}`);
+          else setLog(`❌ 上傳失敗至 ${platform}: ${data.error}`);
+      } catch (e: any) { setLog(`❌ 上傳錯誤至 ${platform}: ${e.message}`); }
   };
 
   const renderVideo = async () => {
@@ -228,10 +224,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
   const publishVideo = async () => {
       if (!videoUrl || !script) return;
-      if (uploadTargets.length === 0) {
-          setLog("請至少選擇一個上傳目標！");
-          return;
-      }
+      if (uploadTargets.length === 0) { setLog("請至少選擇一個上傳目標！"); return; }
       setLoading(true);
       setLog("準備發布...");
       try {
@@ -319,11 +312,18 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   </select>
               </div>
 
+              {/* 🚀 更新：圖片上傳區塊 + 強烈提示 + 產品防呆輸入框 */}
               <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
-                  <label className="text-xs font-bold text-zinc-400 uppercase block mb-3">參考圖片 (Image-to-Video)</label>
-                  <div className="flex items-center gap-4">
-                      <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white py-2 px-4 rounded-lg text-xs font-bold transition flex items-center gap-2 border border-zinc-700">
-                          <span>📷 上傳圖片</span>
+                  <label className="text-xs font-bold text-zinc-400 uppercase block mb-2">參考圖片 (Image-to-Video)</label>
+                  
+                  {/* 視覺警告提示 */}
+                  <div className="text-[10px] text-amber-400/90 bg-amber-950/40 p-2.5 rounded-lg border border-amber-900/50 mb-4 leading-relaxed">
+                      ⚠️ <b>實戰建議：</b>為避免 AI 亂補背景導致產品變形，請上傳<b>「帶有真實環境背景的實拍照」</b>(例如放桌上)，請盡量不要使用透明去背圖 (PNG)。
+                  </div>
+
+                  <div className="flex items-start gap-4 mb-4">
+                      <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white py-2 px-4 rounded-lg text-xs font-bold transition flex items-center gap-2 border border-zinc-700 h-fit">
+                          <span>📷 上傳照片</span>
                           <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                       </label>
                       
@@ -333,8 +333,20 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                               <button onClick={() => setReferenceImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition shadow-md">×</button>
                           </div>
                       ) : (
-                          <span className="text-[10px] text-zinc-500 italic">上傳產品/場景圖，AI 將根據圖片生成腳本與影片</span>
+                          <span className="text-[10px] text-zinc-500 italic mt-2">未選擇檔案</span>
                       )}
+                  </div>
+
+                  {/* 產品防呆細節輸入框 */}
+                  <div className="border-t border-zinc-800/80 pt-3 mt-2">
+                      <label className="text-[11px] font-bold text-emerald-400 block mb-1">🛡️ 產品外觀防呆指示 (選填)</label>
+                      <p className="text-[9px] text-zinc-500 mb-2">如果你怕 AI 搞錯產品功能，請明確描述。例如：「這是一罐板機式噴霧，必須用食指扣動板機來噴灑，不是按壓式。」</p>
+                      <textarea
+                          value={productDescription}
+                          onChange={(e) => setProductDescription(e.target.value)}
+                          placeholder="請輸入產品特殊特徵或操作方式..."
+                          className="w-full bg-black border border-zinc-700 p-2.5 rounded-lg text-xs text-white outline-none focus:border-emerald-500/50 resize-none h-16 transition-colors"
+                      />
                   </div>
               </div>
 
@@ -354,13 +366,12 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div>
                 <label className="text-xs text-purple-400 block mb-1 font-bold">影像生成引擎</label>
                 <select value={config.videoEngine} onChange={(e) => setConfig({...config, videoEngine: e.target.value as any})} className="w-full bg-black border border-purple-500/30 rounded-lg p-2 text-sm text-white focus:border-purple-500 outline-none">
-                  <option value="veo">Google Veo 2.0 (電影級)</option>
                   <option value="kling">Kling AI (可靈 - 透過 Kie.ai)</option>
+                  <option value="veo">Google Veo 2.0 (電影級)</option>
                   <option value="jimeng">Jimeng</option>
                   <option value="heygen">HeyGen (數位人)</option>
                 </select>
                 
-                {/* 🚀 Kling 專屬設定區塊 */}
                 {config.videoEngine === 'kling' && (
                    <div className="animate-fade-in mt-2 p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-lg space-y-4">
                      <div>
