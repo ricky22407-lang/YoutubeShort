@@ -77,9 +77,8 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, status: result.status, videoUrl: result.url });
       }
 
-      // 🚀 前端微服務：單幕畫面生成器，徹底避開 Vercel 300秒限制
       case 'generate_single_video': {
-        const { visualCue, isFirstSceneWithProduct, useStockFootage, videoEngine, referenceImage } = req.body;
+        const { visualCue, isFirstSceneWithProduct, useStockFootage, videoEngine, referenceImage, klingModelVersion } = req.body;
         let finalUrl = '';
         const tryPexels = useStockFootage && !isFirstSceneWithProduct;
         let pexelsSuccess = false;
@@ -94,19 +93,21 @@ export default async function handler(req: any, res: any) {
         }
         
         if (!pexelsSuccess) {
-            console.log(`[API] 獨立生成 AI 場景 (引擎: ${videoEngine})...`);
+            // 🚀 引擎分流：Veo 2.0 正式版
             if (videoEngine === 'veo') {
+                console.log(`[API] 啟動 Veo 2.0 正式版算圖...`);
                 let imageInput = undefined;
                 if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
                     const match = referenceImage.match(/^data:(.+);base64,(.+)$/);
                     if (match) imageInput = { mimeType: match[1], imageBytes: match[2] };
                 }
                 
+                // 升級至最穩定的 veo-2.0-generate-001
                 let operation = await ai.models.generateVideos({
-                    model: 'veo-3.1-fast-generate-preview',
+                    model: 'veo-2.0-generate-001',
                     prompt: visualCue,
                     image: imageInput,
-                    config: { numberOfVideos: 1, resolution: '720p', aspectRatio: '9:16' }
+                    config: { numberOfVideos: 1, resolution: '1080p', aspectRatio: '9:16' }
                 });
 
                 let attempts = 0;
@@ -117,12 +118,59 @@ export default async function handler(req: any, res: any) {
                 }
 
                 if (!operation.done || !operation.response?.generatedVideos?.[0]?.video?.uri) {
-                    return res.status(500).json({ success: false, error: "AI 生成超時" });
+                    return res.status(500).json({ success: false, error: "Veo 生成超時" });
                 }
-                
                 const videoUri = operation.response.generatedVideos[0].video.uri;
                 finalUrl = `${videoUri}&key=${API_KEY}`;
-            } else {
+            } 
+            // 🚀 引擎分流：Kling (透過 Kie.ai)
+            else if (videoEngine === 'kling') {
+                const KIE_API_KEY = process.env.KIE_API_KEY;
+                if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY 環境變數" });
+
+                const selectedKlingModel = klingModelVersion || 'kling-3.0';
+                console.log(`[API] 啟動 Kling 算圖 (模型: ${selectedKlingModel})...`);
+                
+                // 1. 提交任務給 Kie.ai
+                const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: selectedKlingModel,
+                        prompt: visualCue,
+                        image_url: referenceImage || undefined,
+                        duration: "5" 
+                    })
+                });
+
+                if (!submitRes.ok) throw new Error(`Kie.ai 連線失敗: ${submitRes.statusText}`);
+                const taskData = await submitRes.json();
+                
+                const taskId = taskData.data?.id || taskData.id;
+                if (!taskId) throw new Error("無法取得 Kie.ai 任務 ID");
+
+                // 2. 輪詢可靈生成進度 (設定最長等待 4 分鐘)
+                let attempts = 0;
+                while (attempts < 24) { 
+                    await new Promise(r => setTimeout(r, 10000)); 
+                    const statusRes = await fetch(`https://api.kie.ai/api/v1/jobs/${taskId}`, {
+                        headers: { 'Authorization': `Bearer ${KIE_API_KEY}` }
+                    });
+                    const statusData = await statusRes.json();
+                    const status = (statusData.data?.status || statusData.status || '').toUpperCase();
+
+                    if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'SUCCEEDED') {
+                        finalUrl = statusData.data?.video_url || statusData.data?.url || statusData.video_url;
+                        break;
+                    } else if (status === 'FAILED' || status === 'ERROR') {
+                        throw new Error("Kling 雲端算圖失敗");
+                    }
+                    attempts++;
+                }
+
+                if (!finalUrl) throw new Error("Kling 算圖超時 (超過 4 分鐘)");
+            } 
+            else {
                 finalUrl = 'mock'; 
             }
         }
@@ -165,7 +213,6 @@ export default async function handler(req: any, res: any) {
             if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
                 try { await del(previousVideoUrl); } catch (e) {}
             }
-            // 🚀 核心更新：將前端收集到的「單幕影片網址陣列 (preGeneratedSceneUrls)」傳入組裝器
             await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl, req.body.preGeneratedSceneUrls);
             const videoBuffer = fs.readFileSync(outputFilename);
             const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
