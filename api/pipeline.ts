@@ -3,7 +3,7 @@ import { Buffer } from 'buffer';
 import { ScriptGenerator } from '../modules/ScriptGenerator.js';
 import { VideoAssembler } from '../modules/VideoAssembler.js';
 import { HeyGenService } from '../modules/HeyGenService.js';
-import { searchVideos } from '../services/pexelsService.js'; // 👈 新增引入
+import { searchVideos } from '../services/pexelsService.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -54,9 +54,7 @@ export default async function handler(req: any, res: any) {
         const heygenIdInput = (channel.mptConfig?.heygenAvatarId || '').trim();
         let finalAvatarIds: string[] = [];
 
-        if (!heygenIdInput) {
-            return res.status(200).json({ success: false, error: '未提供 HeyGen Avatar ID 或 Group ID' });
-        }
+        if (!heygenIdInput) return res.status(200).json({ success: false, error: '未提供 HeyGen Avatar ID 或 Group ID' });
 
         if (heygenIdInput.includes(',')) {
             finalAvatarIds = heygenIdInput.split(',').map((id: string) => id.trim()).filter((id: string) => id.length > 0);
@@ -79,7 +77,7 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, status: result.status, videoUrl: result.url });
       }
 
-      // 🚀 新增微服務：單幕畫面生成器，徹底避開 Vercel 300秒限制
+      // 🚀 前端微服務：單幕畫面生成器，徹底避開 Vercel 300秒限制
       case 'generate_single_video': {
         const { visualCue, isFirstSceneWithProduct, useStockFootage, videoEngine, referenceImage } = req.body;
         let finalUrl = '';
@@ -122,7 +120,6 @@ export default async function handler(req: any, res: any) {
                     return res.status(500).json({ success: false, error: "AI 生成超時" });
                 }
                 
-                // 直接回傳 Google API 影片位置 (附帶金鑰)，省去下載上傳的時間
                 const videoUri = operation.response.generatedVideos[0].video.uri;
                 finalUrl = `${videoUri}&key=${API_KEY}`;
             } else {
@@ -134,22 +131,14 @@ export default async function handler(req: any, res: any) {
       }
 
       case 'suggest_topics': {
-        const prompt = `
-            Generate 5 viral YouTube Shorts topic ideas for this channel.
-            Channel Niche: ${channel.niche}
-            Channel Concept: ${channel.concept || 'General'}
-            Target Audience: ${channel.language === 'en' ? 'Global' : 'Taiwan/Hong Kong (Traditional Chinese)'}
-            Output ONLY a JSON array of strings. Example: ["Topic 1", "Topic 2"]
-        `;
-        
+        const prompt = `Generate 5 viral YouTube Shorts topic ideas for this channel.\nChannel Niche: ${channel.niche}\nChannel Concept: ${channel.concept || 'General'}\nTarget Audience: ${channel.language === 'en' ? 'Global' : 'Taiwan/Hong Kong (Traditional Chinese)'}\nOutput ONLY a JSON array of strings. Example: ["Topic 1", "Topic 2"]`;
         try {
             const response = await ai.models.generateContent({
                 model: 'gemini-3-flash-preview',
                 contents: prompt,
                 config: { responseMimeType: "application/json", responseSchema: { type: "ARRAY", items: { type: "STRING" } } }
             });
-            const topics = JSON.parse(cleanJson(response.text || '[]'));
-            return res.status(200).json({ success: true, topics });
+            return res.status(200).json({ success: true, topics: JSON.parse(cleanJson(response.text || '[]')) });
         } catch (error: any) {
             return res.status(200).json({ success: false, error: error.message });
         }
@@ -183,33 +172,6 @@ export default async function handler(req: any, res: any) {
             return res.status(200).json({ success: true, videoUrl: blob.url });
         } catch (e: any) {
             return res.status(200).json({ success: false, error: `Assembly Failed: ${e.message}` });
-        }
-      }
-
-      case 'analyze': {
-        let promptContext = channel.mode === 'character' && channel.characterProfile 
-           ? `=== AGENT MODE ACTIVE ===\nYou are acting as the AI Virtual Idol "${channel.characterProfile.name}".\nPersona: ${channel.characterProfile.description}.` 
-           : `Target Niche: ${channel.niche}. Concept: ${channel.concept}`;
-
-        try {
-            const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
-                contents: `
-                ${promptContext}
-                TASK: Create a viral strategy for a YouTube Shorts video.
-                Return JSON: { "prompt": "The detailed Veo prompt", "title": "Viral Title", "desc": "Description", "strategy_note": "Why this video?" }.`,
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "OBJECT",
-                        properties: { prompt: { type: "STRING" }, title: { type: "STRING" }, desc: { type: "STRING" }, strategy_note: { type: "STRING" } },
-                        required: ["prompt", "title", "desc", "strategy_note"]
-                    }
-                }
-            });
-            return res.status(200).json({ success: true, metadata: JSON.parse(cleanJson(response.text || '{}')) });
-        } catch (err: any) {
-            return res.status(200).json({ success: false, error: err.message });
         }
       }
 
