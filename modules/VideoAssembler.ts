@@ -6,7 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os'; 
 import { ScriptData } from '../types.js';
-import { searchVideos } from '../services/pexelsService.js';
 import { finished } from 'stream/promises';
 import { Readable } from 'stream';
 
@@ -25,7 +24,6 @@ export class VideoAssembler {
     this.pexelsApiKey = pexelsApiKey;
   }
 
-  // 內部工具函式 (保持不變)
   private async getDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -69,20 +67,17 @@ export class VideoAssembler {
   private async generateAiVideoMock(outputPath: string): Promise<void> {
       return new Promise((resolve, reject) => {
           ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5)
-            .videoFilters([`drawtext=text='SIMULATION':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`])
+            .videoFilters([`drawtext=text='NO VIDEO SIGNAL':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`])
             .output(outputPath).on('end', () => resolve()).on('error', reject).run();
       });
   }
 
-  // 🚀 核心重構一：路由器 (Router)
-  async assemble(videoType: 'avatar' | 'product' | 'topic', script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
+  // 🚀 路由器：根據影片類型分發給不同的專屬組裝廠
+  async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
       console.log(`[VideoAssembler] 啟動 [${videoType.toUpperCase()}] 專屬渲染管線...`);
       
       const commonSettings = {
-          bgmVolume: config?.bgmVolume ?? 0.1,
-          fontSize: config?.fontSize ?? 80,
-          subtitleColor: config?.subtitleColor || '#FFFF00',
-          fontName: config?.fontName || 'NotoSansTC-Bold.ttf',
+          bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf',
           voiceId: config?.ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId ? config.elevenLabsVoiceId : (config?.voiceId || 'zh-TW-HsiaoChenNeural'),
           bgmMood: config?.bgmMood || 'none'
       };
@@ -90,11 +85,11 @@ export class VideoAssembler {
       if (videoType === 'avatar') {
           return this.assembleAvatarPipeline(script, outputFilename, commonSettings, preGeneratedHeygenUrl);
       } else {
-          return this.assembleSceneBasedPipeline(script, outputFilename, commonSettings, preGeneratedSceneUrls, config?.useStockFootage);
+          return this.assembleSceneBasedPipeline(script, outputFilename, commonSettings, preGeneratedSceneUrls);
       }
   }
 
-  // 🚀 核心重構二：數字人專屬管線 (Avatar Pipeline)
+  // 專屬管線 1：Avatar (單一長影片 + 字幕 + BGM)
   private async assembleAvatarPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedHeygenUrl?: string): Promise<string> {
       if (!preGeneratedHeygenUrl) throw new Error("未收到預先生成的 HeyGen 影片網址！");
       const singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
@@ -127,36 +122,28 @@ export class VideoAssembler {
               filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          
           filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
           
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest'])
-             .output(outputFilename).on('end', () => resolve(outputFilename)).on('error', reject).run();
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', reject).run();
       });
   }
 
-  // 🚀 核心重構三：分鏡拼接管線 (Product & Topic Pipeline)
-  private async assembleSceneBasedPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedSceneUrls?: Record<number, string>, useStockFootage?: boolean): Promise<string> {
+  // 專屬管線 2：Product & Topic (多段短影片拼接 + TTS 配音 + 字幕 + BGM)
+  private async assembleSceneBasedPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
       const sceneAssets: any[] = [];
-      
       for (const scene of script.scenes) {
           const sceneId = scene.id;
           const audioPath = path.join(this.tempDir, `scene_${sceneId}.mp3`);
           let videoPath = path.join(this.tempDir, `scene_${sceneId}.mp4`);
           const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
-          if (!fs.existsSync(audioPath)) {
-              await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
-          }
-          
+          if (!fs.existsSync(audioPath)) await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
           if (!fs.existsSync(videoPath)) {
               if (preGeneratedSceneUrls && preGeneratedSceneUrls[sceneId]) {
                   const url = preGeneratedSceneUrls[sceneId];
                   if (url !== 'mock') await this.downloadFile(url, videoPath);
                   else await this.generateAiVideoMock(videoPath);
-              } else {
-                  await this.generateAiVideoMock(videoPath); // Fallback
-              }
+              } else { await this.generateAiVideoMock(videoPath); }
           }
           sceneAssets.push({ video: videoPath, audio: audioPath, duration: await this.getDuration(audioPath), text: cleanNarration });
       }
@@ -191,37 +178,25 @@ export class VideoAssembler {
           }
 
           filterComplex.push(`[v_concat]ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
-
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest'])
-             .output(outputFilename).on('end', () => resolve(outputFilename)).on('error', reject).run();
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', reject).run();
       });
   }
 
-  // 共用元件：字幕生成器
+  // 共用小工具
   private generateSubtitles(sceneAssets: any[], settings: any): string {
       const assPath = path.join(this.tempDir, 'subtitles.ass');
-      let assEvents = '';
-      let currentTime = 0;
-
-      const formatAssTime = (sec: number) => {
-          const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60), ms = Math.floor((sec % 1) * 100);
-          return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
-      };
-      const hexToASS = (hex: string) => {
-          const clean = hex.replace('#', '');
-          return clean.length === 6 ? `&H00${clean.substring(4, 6)}${clean.substring(2, 4)}${clean.substring(0, 2)}` : '&H0000FFFF';
-      };
+      let assEvents = '', currentTime = 0;
+      const formatAssTime = (sec: number) => { const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60), ms = Math.floor((sec % 1) * 100); return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`; };
+      const hexToASS = (hex: string) => { const clean = hex.replace('#', ''); return clean.length === 6 ? `&H00${clean.substring(4, 6)}${clean.substring(2, 4)}${clean.substring(0, 2)}` : '&H0000FFFF'; };
 
       for (const asset of sceneAssets) {
-          const durationMs = Math.round(asset.duration * 100);
-          const words = asset.text.split(''); 
+          const durationMs = Math.round(asset.duration * 100), words = asset.text.split(''); 
           const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
           let karaokeText = '';
           words.forEach(w => { karaokeText += `{\\k${charDuration}}${w}`; });
           assEvents += `Dialogue: 0,${formatAssTime(currentTime)},${formatAssTime(currentTime + asset.duration)},Default,,0,0,0,,${karaokeText}\n`;
           currentTime += asset.duration;
       }
-
       const fontMap: Record<string, string> = { 'NotoSansTC-Bold.ttf': 'Noto Sans TC', 'NotoSerifTC-Bold.ttf': 'Noto Serif TC', 'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe', 'Roboto-Bold.ttf': 'Roboto', 'Anton-Regular.ttf': 'Anton', 'Bangers-Regular.ttf': 'Bangers' };
       const selectedFontFamily = fontMap[settings.fontName] || 'Noto Sans TC';
       const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${selectedFontFamily},${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,350,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
@@ -229,35 +204,26 @@ export class VideoAssembler {
       return assPath;
   }
 
-  // 共用元件：字型設定器
   private setupFonts(assPath: string, fontName: string) {
       const fontConfigDir = path.join(this.tempDir, 'fontconfig'), localFontDir = path.join(this.tempDir, 'fonts_cache');
       if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
       if (!fs.existsSync(localFontDir)) fs.mkdirSync(localFontDir, { recursive: true });
-
       let systemFontDir = path.join(process.cwd(), 'fonts');
       if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../fonts');
       if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../../fonts');
       const sourceFontPath = path.join(systemFontDir, fontName), destFontPath = path.join(localFontDir, fontName);
       if (fs.existsSync(sourceFontPath)) fs.copyFileSync(sourceFontPath, destFontPath);
-
       const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
       fs.writeFileSync(fontsConfPath, `<?xml version="1.0"?>\n<fontconfig>\n  <dir>${localFontDir}</dir>\n  <cachedir>${fontConfigDir}</cachedir>\n  <config></config>\n</fontconfig>`, 'utf8');
       process.env.FONTCONFIG_PATH = fontConfigDir; process.env.FONTCONFIG_FILE = fontsConfPath;
-
-      return {
-          fontsDirEscaped: localFontDir.replace(/\\/g, '/').replace(/:/g, '\\:'),
-          assPathEscaped: assPath.replace(/\\/g, '/').replace(/:/g, '\\:')
-      };
+      return { fontsDirEscaped: localFontDir.replace(/\\/g, '/').replace(/:/g, '\\:'), assPathEscaped: assPath.replace(/\\/g, '/').replace(/:/g, '\\:') };
   }
 
-  // 共用元件：BGM 下載器
   private async prepareBGM(mood: string): Promise<string> {
       if (!mood || mood === 'none') return '';
       const bgmUrl = await this.fetchDynamicBgm(mood);
       if (!bgmUrl) return '';
       const bgmPath = path.join(this.tempDir, `bgm_${Date.now()}.mp3`);
-      try { await this.downloadFile(bgmUrl, bgmPath); return bgmPath; } 
-      catch (e) { return ''; }
+      try { await this.downloadFile(bgmUrl, bgmPath); return bgmPath; } catch (e) { return ''; }
   }
 }
