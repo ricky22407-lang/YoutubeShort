@@ -5,7 +5,7 @@ interface MPTStudioProps { channel: ChannelConfig; onBack: () => void; isEmbedde
 
 export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedded = false }) => {
   const [script, setScript] = useState<ScriptData | null>(null);
-  const [treatment, setTreatment] = useState<any>(null); // 🚀 企劃書狀態
+  const [treatment, setTreatment] = useState<any>(null); // 企劃書狀態
   
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<string>("");
@@ -43,7 +43,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       if (type === 'avatar') setConfig({...config, videoEngine: 'heygen', useStockFootage: false});
       if (type === 'product') setConfig({...config, videoEngine: 'kling', useStockFootage: false});
       if (type === 'topic') setConfig({...config, videoEngine: 'veo', useStockFootage: true});
-      setScript(null); setTreatment(null); // 切換時清空
+      setScript(null); setTreatment(null);
   };
 
   const fetchAiSuggestions = async () => {
@@ -64,7 +64,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     }
   };
 
-  // 🚀 階段 1：呼叫大腦生成企劃書
   const generateTreatment = async () => {
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
@@ -79,7 +78,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     } catch (e: any) { setLog("錯誤: " + e.message); } finally { setLoading(false); }
   };
 
-  // 🚀 階段 2：依據企劃書生成最終腳本
   const generateFinalScript = async () => {
     setLoading(true); setLog(`🎬 導演已確認企劃，正在撰寫分鏡腳本...`);
     try {
@@ -232,30 +230,122 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               </button>
             </div>
 
-            {/* 架構設定 (縮減版) */}
+            {/* 🚀 完整還原：系統配置 (包含 BGM、字幕等) */}
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 space-y-4">
               <h2 className="text-xl font-semibold">2. 系統配置</h2>
-              <div>
-                <label className="text-xs text-purple-400 block mb-1 font-bold">影像引擎</label>
-                <select value={config.videoEngine} onChange={(e) => setConfig({...config, videoEngine: e.target.value as any})} className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm text-white outline-none">
-                  <option value="kling">Kling AI</option>
-                  <option value="veo">Google Veo 2.0</option>
-                  <option value="heygen">HeyGen</option>
-                </select>
+              
+              <div className="flex bg-black rounded-lg p-1 border border-zinc-800">
+                  <button onClick={() => setConfig({...config, useStockFootage: true})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.useStockFootage ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>混合模式</button>
+                  <button onClick={() => setConfig({...config, useStockFootage: false})} className={`flex-1 py-2 text-xs font-bold rounded-md ${!config.useStockFootage ? 'bg-purple-900/50 text-purple-400' : 'text-zinc-500'}`}>純 AI</button>
               </div>
+
+              <div>
+                <label className="text-xs text-purple-400 block mb-1 font-bold">影像生成引擎</label>
+                <select value={config.videoEngine} onChange={(e) => setConfig({...config, videoEngine: e.target.value as any})} className="w-full bg-black border border-purple-500/30 rounded-lg p-2 text-sm text-white focus:border-purple-500 outline-none">
+                  <option value="kling">Kling AI (可靈)</option>
+                  <option value="veo">Google Veo 2.0</option>
+                  <option value="jimeng">Jimeng</option>
+                  <option value="heygen">HeyGen (數位人)</option>
+                </select>
+                
+                {config.videoEngine === 'kling' && (
+                   <div className="animate-fade-in mt-2 p-3 bg-emerald-900/20 border border-emerald-500/30 rounded-lg space-y-4">
+                     <div>
+                         <label className="text-xs text-emerald-400 block mb-1 font-bold">Kling 模型等級</label>
+                         <select value={config.klingModelVersion} onChange={e => setConfig({...config, klingModelVersion: e.target.value})} className="w-full bg-black border border-emerald-500/50 p-2 rounded-lg text-sm text-white outline-none">
+                             <option value="kling-3.0">Kling 3.0 (最高精準)</option>
+                             <option value="kling-2.6-pro">Kling 2.6 Pro</option>
+                             <option value="kling-2.5-turbo">Kling 2.5 Turbo</option>
+                         </select>
+                     </div>
+                   </div>
+                )}
+                
+                {config.videoEngine === 'heygen' && (
+                   <div className="animate-fade-in mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg space-y-4">
+                     <div>
+                         <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar / Group ID</label>
+                         <input type="text" value={config.heygenAvatarId} onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} placeholder="輸入 ID..." className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" />
+                     </div>
+                     <div>
+                         <label className="text-xs text-indigo-400 block mb-1 font-bold">畫面放大比例: {config.avatarScale.toFixed(1)}x</label>
+                         <input type="range" min="1" max="2.5" step="0.1" value={config.avatarScale} onChange={e => setConfig({...config, avatarScale: parseFloat(e.target.value)})} className="w-full" />
+                     </div>
+                   </div>
+                )}
+              </div>
+
+              <div className="border-t border-zinc-800 my-4 pt-4"></div>
+
               <div>
                   <label className="text-xs text-zinc-400 block mb-1 font-bold">配音引擎</label>
-                  <select value={config.ttsEngine} onChange={e => setConfig({...config, ttsEngine: e.target.value as any})} className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm text-white outline-none">
-                      <option value="edge">Edge TTS</option>
-                      <option value="elevenlabs">ElevenLabs</option>
-                  </select>
+                  <div className="flex bg-black rounded-lg p-1 border border-zinc-800 mb-2">
+                     <button onClick={() => setConfig({...config, ttsEngine: 'edge', voiceId: 'zh-TW-HsiaoChenNeural'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'edge' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>Edge</button>
+                     <button onClick={() => setConfig({...config, ttsEngine: 'elevenlabs', voiceId: 'Puck'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'elevenlabs' ? 'bg-purple-900/50 text-purple-400' : 'text-zinc-500'}`}>ElevenLabs</button>
+                  </div>
+                  {config.ttsEngine === 'elevenlabs' ? (
+                      <input type="text" value={config.voiceId} onChange={e => setConfig({...config, voiceId: e.target.value})} placeholder="Voice ID" className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none" />
+                  ) : (
+                      <select value={config.voiceId} onChange={e => setConfig({...config, voiceId: e.target.value})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
+                          <option value="zh-TW-HsiaoChenNeural">曉辰 (台灣女聲)</option>
+                          <option value="zh-TW-YunJheNeural">允哲 (台灣男聲)</option>
+                      </select>
+                  )}
               </div>
+
+              <div className="border-t border-zinc-800 my-4 pt-4"></div>
+
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">背景音樂音量 ({config.bgmVolume})</label>
+                <input type="range" min="0" max="1" step="0.1" value={config.bgmVolume} onChange={(e) => setConfig({...config, bgmVolume: parseFloat(e.target.value)})} className="w-full" />
+              </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">字體大小 ({config.fontSize}px)</label>
+                <input type="range" min="12" max="120" step="2" value={config.fontSize} onChange={(e) => setConfig({...config, fontSize: parseInt(e.target.value)})} className="w-full" />
+              </div>
+              
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">字幕顏色</label>
+                <div className="flex gap-2">
+                    {['#FFFF00', '#FFFFFF', '#00FFFF', '#FF00FF', '#00FF00'].map(color => (
+                        <button key={color} onClick={() => setConfig({...config, subtitleColor: color})} className={`w-6 h-6 rounded-full border-2 ${config.subtitleColor === color ? 'border-white' : 'border-transparent'}`} style={{ backgroundColor: color }} />
+                    ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1 font-bold">字幕字體</label>
+                <select value={config.fontName} onChange={(e) => setConfig({...config, fontName: e.target.value})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
+                  <optgroup label="中文 (Chinese)">
+                    <option value="NotoSansTC-Bold.ttf">Noto Sans TC (黑體)</option>
+                    <option value="NotoSerifTC-Bold.ttf">Noto Serif TC (宋體)</option>
+                    <option value="ZCOOLKuaiLe-Regular.ttf">快樂體 (可愛)</option>
+                  </optgroup>
+                  <optgroup label="英文 (English)">
+                    <option value="Roboto-Bold.ttf">Roboto (標準)</option>
+                    <option value="Anton-Regular.ttf">Anton (衝擊感)</option>
+                    <option value="Bangers-Regular.ttf">Bangers (漫畫風)</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1 font-bold">配樂風格 (BGM)</label>
+                <select value={config.bgmMood} onChange={(e) => setConfig({...config, bgmMood: e.target.value as any})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
+                  <option value="random">🎲 隨機 (Random)</option>
+                  <option value="epic">⚔️ 史詩 (Epic)</option>
+                  <option value="relaxing">☕ 輕鬆 (Relaxing)</option>
+                  <option value="funny">🤡 搞笑 (Funny)</option>
+                  <option value="suspense">🕵️ 懸疑 (Suspense)</option>
+                  <option value="none">🔇 無配樂 (No BGM)</option>
+                </select>
+              </div>
+
             </div>
           </div>
 
           {/* 中間：內容審閱 */}
           <div className="lg:col-span-4 space-y-6">
-            {/* 企劃書區塊 */}
             {treatment && !script && (
               <div className="bg-zinc-900/80 p-6 rounded-2xl border border-amber-500/50 h-full flex flex-col shadow-[0_0_20px_rgba(245,158,11,0.1)] animate-fade-in">
                 <h2 className="text-xl font-black mb-4 text-amber-400 flex items-center gap-2">📝 導演企劃審閱</h2>
@@ -276,7 +366,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               </div>
             )}
 
-            {/* 腳本區塊 */}
             {script && (
               <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 h-full flex flex-col animate-fade-in">
                 <div className="flex justify-between items-center mb-4">
@@ -305,7 +394,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             )}
           </div>
 
-          {/* 右側：預覽與發布 */}
+          {/* 🚀 完整還原：右側預覽與社群發布 */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 min-h-[400px] flex flex-col items-center justify-center relative">
               {videoUrl ? (
@@ -313,6 +402,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   <div className="w-full aspect-[9/16] bg-black rounded-lg overflow-hidden relative">
                     <video src={videoUrl} controls className="w-full h-full object-contain" autoPlay loop />
                   </div>
+                  <button onClick={handleDownload} className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold transition flex items-center justify-center gap-2 border border-zinc-700 shadow-lg">
+                    ⬇️ 下載最終影片檔案
+                  </button>
                 </div>
               ) : (
                 <div className="text-center text-zinc-500"><div className="text-4xl mb-4">🎬</div><p>預覽將顯示於此</p></div>
@@ -323,7 +415,24 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 <button onClick={renderVideo} disabled={loading || !script} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-black uppercase tracking-widest disabled:opacity-50 mb-4">
                     {loading && !videoUrl ? "渲染中..." : "🎬 4. 開始終極渲染"}
                 </button>
+
+                {videoUrl && (
+                    <div className="border-t border-zinc-800 pt-4 mt-4">
+                        <div className="flex gap-4 mb-6">
+                            {['youtube', 'instagram', 'facebook'].map(platform => (
+                                <label key={platform} className="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" checked={uploadTargets.includes(platform)} onChange={e => e.target.checked ? setUploadTargets([...uploadTargets, platform]) : setUploadTargets(uploadTargets.filter(t => t !== platform))} />
+                                    <span className="text-sm font-bold capitalize">{platform}</span>
+                                </label>
+                            ))}
+                        </div>
+                        <button onClick={publishVideo} disabled={loading || uploadTargets.length === 0} className="w-full py-4 bg-pink-600 hover:bg-pink-500 rounded-xl font-black uppercase tracking-widest disabled:opacity-50">
+                            🚀 確認並發布
+                        </button>
+                    </div>
+                )}
             </div>
+
             <div className="bg-black font-mono text-xs text-zinc-400 p-4 rounded-xl border border-zinc-800 h-32 overflow-y-auto">
               <div className="text-zinc-500 mb-2">系統日誌:</div>
               {log && <div className="text-emerald-400">&gt; {log}</div>}
