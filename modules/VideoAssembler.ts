@@ -24,6 +24,16 @@ export class VideoAssembler {
     this.pexelsApiKey = pexelsApiKey;
   }
 
+  // 🚀 FFmpeg 專屬的最強路徑轉譯器 (解決 Windows/Vercel 的 No such file 報錯)
+  private escapeForFfmpeg(str: string) {
+      return str
+          .replace(/\\/g, '/')      // 將 Windows 的反斜線轉為正斜線
+          .replace(/:/g, '\\:')     // 轉義磁碟機冒號 (C:)
+          .replace(/,/g, '\\,')     // 轉義逗號 (FFmpeg濾鏡的分隔符)
+          .replace(/'/g, "\\'")     // 轉義單引號
+          .replace(/ /g, '\\ ');    // 轉義空白字元
+  }
+
   private async getDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -66,15 +76,21 @@ export class VideoAssembler {
       return '';
   }
 
+  // 🚀 防呆機制：移除高風險的 drawtext 字體繪製，改為安全無依賴的純黑畫面
   private async generateAiVideoMock(outputPath: string): Promise<void> {
       return new Promise((resolve, reject) => {
-          ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5)
-            .videoFilters([`drawtext=text='NO VIDEO SIGNAL':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2`])
-            .output(outputPath).on('end', () => resolve()).on('error', reject).run();
+          ffmpeg()
+            .input('color=c=black:s=720x1280')
+            .inputFormat('lavfi')
+            .duration(5)
+            .output(outputPath)
+            .on('end', () => resolve())
+            .on('error', reject)
+            .run();
       });
   }
 
-  // 🚀 路由器：根據影片類型分發給不同的專屬組裝廠
+  // 路由器：根據影片類型分發給不同的專屬組裝廠
   async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
       console.log(`[VideoAssembler] 啟動 [${videoType.toUpperCase()}] 專屬渲染管線...`);
       
@@ -124,9 +140,16 @@ export class VideoAssembler {
               filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
           
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', reject).run();
+          // 🚀 關鍵修復：不加引號，完全交給 escapeForFfmpeg 處理路徑
+          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          
+          cmd.complexFilter(filterComplex)
+             .outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest'])
+             .output(outputFilename)
+             .on('end', () => resolve(outputFilename))
+             .on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`)))
+             .run();
       });
   }
 
@@ -179,8 +202,15 @@ export class VideoAssembler {
               aFinal = '[a_mixed]';
           }
 
-          filterComplex.push(`[v_concat]ass='${assPathEscaped}':fontsdir='${fontsDirEscaped}'[v_out]`);
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', reject).run();
+          // 🚀 關鍵修復：不加引號，完全交給 escapeForFfmpeg 處理路徑
+          filterComplex.push(`[v_concat]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          
+          cmd.complexFilter(filterComplex)
+             .outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest'])
+             .output(outputFilename)
+             .on('end', () => resolve(outputFilename))
+             .on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`)))
+             .run();
       });
   }
 
@@ -210,15 +240,24 @@ export class VideoAssembler {
       const fontConfigDir = path.join(this.tempDir, 'fontconfig'), localFontDir = path.join(this.tempDir, 'fonts_cache');
       if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
       if (!fs.existsSync(localFontDir)) fs.mkdirSync(localFontDir, { recursive: true });
+      
       let systemFontDir = path.join(process.cwd(), 'fonts');
       if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../fonts');
       if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../../fonts');
+      
       const sourceFontPath = path.join(systemFontDir, fontName), destFontPath = path.join(localFontDir, fontName);
       if (fs.existsSync(sourceFontPath)) fs.copyFileSync(sourceFontPath, destFontPath);
+      
       const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
-      fs.writeFileSync(fontsConfPath, `<?xml version="1.0"?>\n<fontconfig>\n  <dir>${localFontDir}</dir>\n  <cachedir>${fontConfigDir}</cachedir>\n  <config></config>\n</fontconfig>`, 'utf8');
-      process.env.FONTCONFIG_PATH = fontConfigDir; process.env.FONTCONFIG_FILE = fontsConfPath;
-      return { fontsDirEscaped: localFontDir.replace(/\\/g, '/').replace(/:/g, '\\:'), assPathEscaped: assPath.replace(/\\/g, '/').replace(/:/g, '\\:') };
+      fs.writeFileSync(fontsConfPath, `<?xml version="1.0"?>\n<fontconfig>\n  <dir>${localFontDir.replace(/\\/g, '/')}</dir>\n  <cachedir>${fontConfigDir.replace(/\\/g, '/')}</cachedir>\n  <config></config>\n</fontconfig>`, 'utf8');
+      
+      process.env.FONTCONFIG_PATH = fontConfigDir; 
+      process.env.FONTCONFIG_FILE = fontsConfPath;
+      
+      return { 
+          fontsDirEscaped: this.escapeForFfmpeg(localFontDir), 
+          assPathEscaped: this.escapeForFfmpeg(assPath) 
+      };
   }
 
   private async prepareBGM(mood: string): Promise<string> {
