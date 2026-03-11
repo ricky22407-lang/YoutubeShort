@@ -110,20 +110,22 @@ export default async function handler(req: any, res: any) {
                     actualModelName = referenceImage ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
                 }
 
-                // 打包給 Kie.ai 的參數
+                // 🚀 封裝給 Kie.ai 的參數 (修正數字格式與雙重圖片參數)
                 const kieInput: any = {
                     prompt: visualCue,
-                    duration: "5",          
+                    duration: 5,  // 👈 必須是數字 5，不能加引號
                     aspect_ratio: "9:16"    
                 };
                 
-                // 防呆：依照 3.0 或 2.6 給予對應的圖片格式
-                if (actualModelName === "kling-3.0") {
+                if (actualModelName === "kling-3.0/video") {
                     kieInput.mode = "pro";        
                     kieInput.multi_shots = false; 
                     if (referenceImage) kieInput.image_urls = [referenceImage]; 
                 } else {
-                    if (referenceImage) kieInput.image_url = referenceImage; 
+                    if (referenceImage) {
+                        kieInput.image_url = referenceImage; 
+                        kieInput.image = referenceImage; // 👈 Kie.ai 的圖生影片必填這個
+                    }
                 }
 
                 const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
