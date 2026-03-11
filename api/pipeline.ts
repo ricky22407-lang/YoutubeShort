@@ -99,10 +99,24 @@ export default async function handler(req: any, res: any) {
                 const KIE_API_KEY = process.env.KIE_API_KEY;
                 if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY" });
                 const selectedKlingModel = klingModelVersion || 'kling-3.0';
+                // 🚀 修正：將參數正確包裝進 input 物件中
+                const kieInput: any = {
+                    prompt: visualCue,
+                    duration: 5
+                };
+                
+                // 如果有上傳參考圖，才加入 image_url 屬性
+                if (referenceImage) {
+                    kieInput.image_url = referenceImage;
+                }
+
                 const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: selectedKlingModel, prompt: visualCue, image_url: referenceImage || undefined, duration: "5" })
+                    body: JSON.stringify({ 
+                        model: selectedKlingModel, 
+                        input: kieInput // 👈 關鍵：Kie.ai 需要這個 input 殼
+                    })
                 });
                 
                 // 🚀 抓蟲升級：印出 Kie.ai 的真實回傳內容
