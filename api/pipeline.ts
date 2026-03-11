@@ -164,11 +164,10 @@ export default async function handler(req: any, res: any) {
                 let taskData;
                 try { taskData = JSON.parse(textResponse); } catch (e) { throw new Error(`Kie.ai 連線失敗: ${textResponse}`); }
 
-                const taskId = taskData?.data?.id || taskData?.id;
-                if (!taskId) {
-                    console.error("[Kie API Error]", taskData);
-                    throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
-                }
+                // 🚀 修正：完美相容 Kie.ai 新版 taskId 與舊版 id 欄位
+                const taskId = taskData?.data?.taskId || taskData?.taskId || taskData?.data?.id || taskData?.id;
+                
+                if (!taskId) throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
                 
                 console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢...`);
                 
@@ -180,7 +179,7 @@ export default async function handler(req: any, res: any) {
                     const status = (statusData.data?.status || statusData.status || '').toUpperCase();
                     
                     if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'SUCCEEDED') {
-                        finalUrl = statusData.data?.video_url || statusData.data?.url || statusData.video_url; 
+                        finalUrl = statusData.data?.video_url || statusData.data?.videoUrl || statusData.data?.url || statusData.video_url; 
                         break;
                     } else if (status === 'FAILED' || status === 'ERROR') {
                         throw new Error(`Kling 雲端算圖失敗: ${JSON.stringify(statusData)}`);
