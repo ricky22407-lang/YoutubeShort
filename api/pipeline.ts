@@ -174,14 +174,23 @@ export default async function handler(req: any, res: any) {
                 let attempts = 0;
                 while (attempts < 24) { 
                     await new Promise(r => setTimeout(r, 10000)); 
-                    const statusRes = await fetch(`https://api.kie.ai/api/v1/jobs/${taskId}`, { headers: { 'Authorization': `Bearer ${KIE_API_KEY}` } });
-                    const statusData = await statusRes.json();
-                    const status = (statusData.data?.status || statusData.status || '').toUpperCase();
                     
-                    if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'SUCCEEDED') {
-                        finalUrl = statusData.data?.video_url || statusData.data?.videoUrl || statusData.data?.url || statusData.video_url; 
+                    // 🚀 修正 1：對齊官方查詢進度的正確 API 網址
+                    const statusUrl = `https://api.kie.ai/api/v1/jobs/recordInfo?taskId=${taskId}`;
+                    const statusRes = await fetch(statusUrl, { 
+                        headers: { 'Authorization': `Bearer ${KIE_API_KEY}` } 
+                    });
+                    const statusData = await statusRes.json();
+                    
+                    // 🚀 修正 2：強制轉型為字串 (避免數字引發 TypeError)，並抓取官方的 state 欄位
+                    const rawStatus = statusData.data?.state || statusData.data?.status || statusData.state || statusData.status || '';
+                    const status = String(rawStatus).toUpperCase();
+                    
+                    if (status === 'SUCCESS' || status === 'COMPLETED' || status === 'SUCCEEDED') {
+                        // 🚀 修正 3：多重防呆抓取影片網址 (官方有時會把網址包在 response 物件裡)
+                        finalUrl = statusData.data?.video_url || statusData.data?.url || statusData.data?.response?.video_url || statusData.data?.response?.url || statusData.video_url; 
                         break;
-                    } else if (status === 'FAILED' || status === 'ERROR') {
+                    } else if (status === 'FAIL' || status === 'FAILED' || status === 'ERROR') {
                         throw new Error(`Kling 雲端算圖失敗: ${JSON.stringify(statusData)}`);
                     }
                     attempts++;
