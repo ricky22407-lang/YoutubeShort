@@ -71,7 +71,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     try {
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'generate_treatment', channel, topic: finalTopic, videoType, productDescription })
+        body: JSON.stringify({ stage: 'generate_treatment', channel, topic: finalTopic, videoType, productDescription, targetDuration: config.targetDuration, allowNoVoiceover: config.allowNoVoiceover })
       });
       const data = await res.json();
       if (data.success) { setTreatment(data.treatment); setLog(`✅ 企劃書已產出！請在右側審閱並修改。`); } else setLog("錯誤: " + data.error);
