@@ -104,10 +104,22 @@ export default async function handler(req: any, res: any) {
                     headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ model: selectedKlingModel, prompt: visualCue, image_url: referenceImage || undefined, duration: "5" })
                 });
-                if (!submitRes.ok) throw new Error(`Kie.ai 連線失敗: ${submitRes.statusText}`);
-                const taskData = await submitRes.json();
-                const taskId = taskData.data?.id || taskData.id;
-                if (!taskId) throw new Error("無法取得 Kie.ai 任務 ID");
+                
+                // 🚀 抓蟲升級：印出 Kie.ai 的真實回傳內容
+                const textResponse = await submitRes.text();
+                let taskData;
+                try {
+                    taskData = JSON.parse(textResponse);
+                } catch (e) {
+                    throw new Error(`Kie.ai 連線失敗，回傳了非 JSON 格式: ${textResponse}`);
+                }
+
+                const taskId = taskData?.data?.id || taskData?.id;
+                if (!taskId) {
+                    console.error("[Kie API Error]", taskData);
+                    // 將真實錯誤訊息丟到前端介面顯示
+                    throw new Error(`Kie.ai 拒絕任務，回傳錯誤: ${JSON.stringify(taskData)}`);
+                }
                 let attempts = 0;
                 while (attempts < 24) { 
                     await new Promise(r => setTimeout(r, 10000)); 
