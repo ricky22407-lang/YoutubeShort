@@ -109,14 +109,15 @@ export default async function handler(req: any, res: any) {
                     actualModelName = referenceImage ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
                 }
 
-                // 🚀 關鍵修正 2：組裝正確的 input 格式 (Kie.ai 官方要求 image_urls 為陣列)
+                // 🚀 關鍵修正 2：恢復使用單數字串 image_url，並確保 duration 為數字
                 const kieInput: any = {
-                    prompt: visualCue,
-                    duration: "5"
+                    prompt: visualCue
                 };
                 
                 if (referenceImage) {
-                    kieInput.image_urls = [referenceImage];
+                    // Kie.ai 圖生影片必填欄位
+                    kieInput.image_url = referenceImage;
+                    kieInput.image = referenceImage; // 雙重防呆
                 }
 
                 console.log(`[Kling] 準備呼叫模型: ${actualModelName}`);
