@@ -8,33 +8,46 @@ export class ScriptGenerator {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
-  async generate(topic: string, language: string = "zh-TW", referenceImage?: string | null, productDescription?: string): Promise<ScriptData> {
-    console.log(`[ScriptGenerator] 正在生成腳本, 主題: ${topic}, 語言: ${language}`);
-    
-    let imageContext = "";
-    if (referenceImage) {
-        imageContext = "The user has provided a reference image for the product/subject. Ensure the script highlights its visible features and uses it as the core subject in visual cues.";
-    }
+  async generate(topic: string, language: string = "zh-TW", referenceImage?: string | null, productDescription?: string, videoType: 'avatar' | 'product' | 'topic' = 'topic'): Promise<ScriptData> {
+    console.log(`[ScriptGenerator] 生成腳本, 主題: ${topic}, 語言: ${language}, 類型: ${videoType}`);
 
-    // 🚀 核心升級：把使用者的防呆描述變成最高級別的 Prompt 指令
-    if (productDescription) {
-        imageContext += `\n\n【CRITICAL: PRODUCT PHYSICAL DETAILS】
-The user has strictly specified the following physical traits or mechanical actions for the product: "${productDescription}".
-You MUST STRICTLY incorporate these exact physical mechanisms into the 'visual_cue' whenever the product is interacted with. (e.g., if the user says "trigger spray using index finger", you MUST write that in the visual cue, do NOT use default AI bias like "push down pump").`;
+    let systemInstruction = "";
+
+    // 🚀 核心重構：針對三種影片類型，給予完全不同的提示詞策略
+    if (videoType === 'avatar') {
+        systemInstruction = `
+        【AVATAR PRESENTER MODE (數字人演講模式)】
+        You are an expert scriptwriter for AI Avatar (digital human) videos. Your goal is to write a highly engaging, conversational script.
+        - 'narration' (配音): Must be fast-paced, hook the viewer in the first 3 seconds, and sound like a passionate YouTuber speaking directly to the camera. Use spoken language, not formal writing.
+        - 'visual_cue' (畫面提示): Since the visual is just an avatar talking, KEEP THIS VERY SIMPLE. Describe the emotion, hand gestures, or what text/emoji should pop up on the screen (e.g., "Excited expression, text pops up: 'SECRET!'"). Do NOT write complex cinematic scene changes.
+        `;
+    } else if (videoType === 'product') {
+        let productContext = referenceImage ? "The user provided a product reference image." : "Focus on the product details.";
+        if (productDescription) {
+            productContext += `\n【CRITICAL: PRODUCT PHYSICAL DETAILS】\nThe user strictly specified: "${productDescription}". You MUST STRICTLY incorporate these exact physical mechanisms into EVERY 'visual_cue'. Do NOT invent default mechanisms (e.g., if they say "trigger spray", never write "push down pump").`;
+        }
+        systemInstruction = `
+        【COMMERCIAL PRODUCT MODE (產品實拍廣告模式)】
+        You are an elite commercial director.
+        ${productContext}
+        - 'visual_cue' (畫面提示): You are writing prompts for an AI Video Generator. You MUST lock the product subject. Always explicitly describe the product in every scene (do not use pronouns like "it"). Add cinematic styles (e.g., "cinematic lighting, macro shot, 4k, highly detailed"). Focus on the product being used or displayed. AVOID complex jump cuts.
+        - 'narration' (配音): Focus on selling points, sensory details, solving pain points, and a strong Call to Action.
+        `;
+    } else {
+        systemInstruction = `
+        【VIRAL TOPIC MODE (主題科普拼接模式)】
+        You are an expert viral YouTube Shorts creator.
+        - 'visual_cue' (畫面提示): Write prompts for an AI Video Generator to create visually striking B-roll footage that matches the narration (e.g., "A cinematic drone shot over a neon-lit cyberpunk city, 4k resolution"). Keep actions simple and continuous.
+        - 'narration' (配音): Informative, engaging, fast-paced storytelling.
+        `;
     }
 
     const prompt = `
-      You are an expert viral YouTube Shorts scriptwriter and an AI Video Prompt Engineer.
-      Create a viral short video script based on this topic: ${topic}.
-      ${imageContext}
+      ${systemInstruction}
 
-      【CRITICAL: AI VIDEO GENERATION CONSTRAINTS】
-      The 'visual_cue' field will be sent directly to AI video generators (like Google Veo / Kling). To prevent visual inconsistency and product distortion across cuts, you MUST follow these rules for EVERY visual_cue:
-      1. SUBJECT LOCK: Always describe the core product/subject in detail in every scene. Do not use pronouns like "it" or "the bottle". Use explicit descriptions.
-      2. GLOBAL STYLE: Append a consistent cinematic style to the end of every visual cue to maintain color grading (e.g., ", cinematic lighting, 4k resolution, highly detailed").
-      3. AVOID JUMP CUTS: AI struggles with complex camera movements. Keep actions simple, continuous, and focused on the subject.
+      Topic: ${topic}
+      Language: ${language}
 
-      Language: ${language}.
       Output MUST be a JSON object strictly matching this schema:
       {
         "title": "A highly engaging title",
@@ -43,7 +56,7 @@ You MUST STRICTLY incorporate these exact physical mechanisms into the 'visual_c
           {
             "id": 1,
             "narration": "The spoken text for this scene.",
-            "visual_cue": "Detailed AI video prompt following the constraints above."
+            "visual_cue": "Instruction based on the current mode."
           }
         ],
         "socialMediaCopy": {
