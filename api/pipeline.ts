@@ -9,7 +9,6 @@ import fs from 'fs';
 import os from 'os';
 import { put, del } from '@vercel/blob';
 
-// 設定較長的執行時間給最後組裝影片使用
 export const config = { maxDuration: 300 };
 
 function cleanJson(text: string): string {
@@ -64,18 +63,15 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, status: result.status, videoUrl: result.url });
       }
 
-      // 🚀 階段 A：發送任務並取得「號碼牌」(taskId)
       case 'generate_video_submit': {
         const { visualCue, isFirstSceneWithProduct, useStockFootage, videoEngine, referenceImage, klingModelVersion } = req.body;
         const tryPexels = useStockFootage && !isFirstSceneWithProduct;
         
-        // 1. 優先嘗試免費圖庫 (混合模式)
         if (tryPexels && PEXELS_API_KEY) {
             const videoUrls = await searchVideos(visualCue, PEXELS_API_KEY);
             if (videoUrls.length > 0) return res.status(200).json({ success: true, isStock: true, videoUrl: videoUrls[0] });
         }
         
-        // 2. 如果是 Veo 引擎
         if (videoEngine === 'veo') {
             let imageInput = undefined;
             if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
@@ -86,18 +82,14 @@ export default async function handler(req: any, res: any) {
                 model: 'veo-2.0-generate-001', prompt: visualCue, image: imageInput,
                 config: { numberOfVideos: 1, resolution: '1080p', aspectRatio: '9:16' }
             });
-            // 吐出 Veo 的專屬任務物件
             return res.status(200).json({ success: true, isStock: false, taskId: operation.name, operation });
         } 
-        // 3. 如果是 Kling 引擎
         else if (videoEngine === 'kling') {
             const KIE_API_KEY = process.env.KIE_API_KEY;
             if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY" });
             
-            // 圖片轉公開網址
             let imageUrlToUse = referenceImage;
             if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
-                console.log(`[API] 發現 Base64 圖片，上傳至 Vercel Blob...`);
                 try {
                     const base64Data = referenceImage.split(',')[1];
                     const buffer = Buffer.from(base64Data, 'base64');
@@ -109,19 +101,27 @@ export default async function handler(req: any, res: any) {
             }
 
             const selectedKlingModel = klingModelVersion || 'kling-3.0';
-            let actualModelName = "kling-3.0"; 
+            // 🚀 關鍵修正：確保所有模型名稱都帶有 /video 字尾以符合 Kie.ai 規範
+            let actualModelName = "kling-3.0/video"; 
             if (selectedKlingModel === 'kling-2.6-pro') actualModelName = imageUrlToUse ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
             else if (selectedKlingModel === 'kling-2.5-turbo') actualModelName = imageUrlToUse ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
 
-            const kieInput: any = { prompt: visualCue, duration: "5" };
+            const kieInput: any = { 
+                prompt: visualCue, 
+                duration: "5", // 必須是字串格式
+                sound: false 
+            };
+
             if (imageUrlToUse) {
-                kieInput.image_url = imageUrlToUse;
                 kieInput.image_urls = [imageUrlToUse];  
             } else {
                 kieInput.aspect_ratio = "9:16";
             }
 
-            if (actualModelName === "kling-3.0") { kieInput.mode = "pro"; kieInput.multi_shots = false; }
+            if (actualModelName === "kling-3.0/video") { 
+                kieInput.mode = "pro"; 
+                kieInput.multi_shots = false; 
+            }
 
             const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
@@ -135,14 +135,12 @@ export default async function handler(req: any, res: any) {
             const taskId = taskData?.data?.taskId || taskData?.taskId || taskData?.data?.id || taskData?.id;
             if (!taskId) throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
             
-            // 吐出 Kling 的專屬 ID
             return res.status(200).json({ success: true, isStock: false, taskId });
         } else {
             return res.status(200).json({ success: true, isStock: true, videoUrl: 'mock' }); 
         }
       }
 
-      // 🚀 階段 B：拿著號碼牌去查詢進度 (前端會每 10 秒呼叫一次這裡)
       case 'generate_video_status': {
         const { videoEngine, taskId, operation } = req.body;
         
@@ -195,7 +193,6 @@ export default async function handler(req: any, res: any) {
         const targetDuration = req.body.targetDuration || '60';
         const durationPrompt = targetDuration === '30' ? "\n【極重要】腳本總時長必須嚴格控制在 30 秒以內！總字數請限制在 80~100 字左右，節奏要極快。" : "\n【極重要】腳本總時長必須嚴格控制在 60 秒以內！總字數請限制在 150~180 字左右。";
         const topicToUse = (req.body.topic || channel.niche) + durationPrompt;
-        
         const script = await generator.generate(topicToUse, channel.language || 'zh-TW', req.body.referenceImage, req.body.productDescription, req.body.videoType || 'topic', req.body.treatment);
         return res.status(200).json({ success: true, script });
       }
