@@ -13,9 +13,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [log, setLog] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [referenceImage, setReferenceImage] = useState<string | null>(null);
-  
-  // 🚀 新增產品描述的 State
   const [productDescription, setProductDescription] = useState<string>("");
+  
+  // 🚀 新增：影片核心類型的 State
+  const [videoType, setVideoType] = useState<'avatar' | 'product' | 'topic'>('topic');
 
   const [config, setConfig] = useState({
     bgmVolume: 0.1,
@@ -23,7 +24,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     subtitleColor: '#FFFF00',
     ttsEngine: 'edge' as 'edge' | 'elevenlabs',
     voiceId: 'zh-TW-HsiaoChenNeural', 
-    videoEngine: 'kling' as 'veo' | 'kling' | 'jimeng' | 'heygen', // 預設改為 kling 追求精準
+    videoEngine: 'veo' as 'veo' | 'kling' | 'jimeng' | 'heygen',
     heygenAvatarId: '',
     avatarScale: 1.0, 
     klingModelVersion: 'kling-3.0',
@@ -50,6 +51,14 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
 
+  // 🚀 聯動魔法：選擇影片類型時，自動切換到最適合的算圖引擎
+  const handleVideoTypeChange = (type: 'avatar' | 'product' | 'topic') => {
+      setVideoType(type);
+      if (type === 'avatar') setConfig({...config, videoEngine: 'heygen', useStockFootage: false});
+      if (type === 'product') setConfig({...config, videoEngine: 'kling', useStockFootage: false});
+      if (type === 'topic') setConfig({...config, videoEngine: 'veo', useStockFootage: true});
+  };
+
   const fetchAiSuggestions = async () => {
     setIsSuggesting(true);
     try {
@@ -62,14 +71,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
         if (data.success) {
             setAiSuggestions(data.topics);
             setTopicMode('ai');
-        } else {
-            setLog("建議失敗: " + data.error);
-        }
-    } catch(e: any) {
-        setLog("建議錯誤: " + e.message);
-    } finally {
-        setIsSuggesting(false);
-    }
+        } else setLog("建議失敗: " + data.error);
+    } catch(e: any) { setLog("建議錯誤: " + e.message); } 
+    finally { setIsSuggesting(false); }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -78,7 +82,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       const reader = new FileReader();
       reader.onloadend = () => {
         setReferenceImage(reader.result as string);
-        setLog("✅ 圖片已載入，請記得填寫下方的產品外觀防呆描述！");
+        setLog("✅ 圖片已載入。如果是產品，請記得填寫外觀防呆描述！");
       };
       reader.readAsDataURL(file);
     }
@@ -88,7 +92,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
     setLoading(true);
-    setLog(`正在生成腳本 (目標時長: ${config.targetDuration} 秒以內)...`);
+    setLog(`正在以 [${videoType.toUpperCase()}] 模式生成腳本...`);
     try {
       const res = await fetch('/api/pipeline', {
         method: 'POST',
@@ -99,13 +103,14 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             topic: finalTopic,
             targetDuration: config.targetDuration,
             referenceImage,
-            productDescription // 🚀 將產品防呆描述一起送出
+            productDescription,
+            videoType // 🚀 傳遞影片類型
         })
       });
       const data = await res.json();
       if (data.success) {
         setScript(data.script);
-        setLog(`腳本生成完畢！共 ${data.script.scenes.length} 個場景。您可以直接修改文字！`);
+        setLog(`腳本生成完畢！共 ${data.script.scenes.length} 個場景。`);
       } else setLog("錯誤: " + data.error);
     } catch (e: any) { setLog("錯誤: " + e.message); } 
     finally { setLoading(false); }
@@ -113,9 +118,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
   const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
     if (!script) return;
-    const updatedScenes = script.scenes.map(scene => 
-        scene.id === id ? { ...scene, [field]: value } : scene
-    );
+    const updatedScenes = script.scenes.map(scene => scene.id === id ? { ...scene, [field]: value } : scene);
     setScript({ ...script, scenes: updatedScenes });
   };
 
@@ -135,7 +138,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
           const data = await res.json();
           if (data.success) setLog(`✅ 已上傳至 ${platform}: ${data.url || data.videoId}`);
           else setLog(`❌ 上傳失敗至 ${platform}: ${data.error}`);
-      } catch (e: any) { setLog(`❌ 上傳錯誤至 ${platform}: ${e.message}`); }
+      } catch (e: any) { setLog(`❌ 上傳錯誤: ${e.message}`); }
   };
 
   const renderVideo = async () => {
@@ -155,7 +158,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
           const submitRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_submit', channel: tempChannel, scriptData: script }) }).then(r => r.json());
           if (!submitRes.success) throw new Error(submitRes.error || "提交失敗");
           
-          setLog('HeyGen 雲端算圖中 (預計 3~5 分鐘，前 3 分鐘系統將暫停連線以節省資源)...');
+          setLog('HeyGen 雲端算圖中 (預計 3~5 分鐘)...');
           await new Promise(resolve => setTimeout(resolve, 180000)); 
           
           setLog('正在確認進度...');
@@ -166,7 +169,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               await new Promise(resolve => setTimeout(resolve, 10000));
           }
       } else {
-          setLog(`🎥 啟動逐幕分散運算 (防 429 頻率限制保護機制)...`);
+          setLog(`🎥 啟動逐幕分散運算...`);
           for (let i = 0; i < script.scenes.length; i++) {
               const scene = script.scenes[i];
               setLog(`⏳ 正在運算第 ${i+1}/${script.scenes.length} 幕畫面...`);
@@ -186,14 +189,11 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   })
               }).then(r => r.json());
 
-              if (sceneRes.success) {
-                  preGeneratedSceneUrls[scene.id] = sceneRes.videoUrl;
-              } else {
-                  throw new Error(`場景 ${scene.id} 生成失敗: ${sceneRes.error}`);
-              }
+              if (sceneRes.success) { preGeneratedSceneUrls[scene.id] = sceneRes.videoUrl; } 
+              else { throw new Error(`場景 ${scene.id} 生成失敗: ${sceneRes.error}`); }
 
               if (i < script.scenes.length - 1 && config.videoEngine === 'veo') {
-                  setLog(`🛡️ [防護機制] 進入冷卻時間 30 秒，保護 Veo API 額度...`);
+                  setLog(`🛡️ 進入冷卻時間 30 秒...`);
                   await new Promise(resolve => setTimeout(resolve, 30000));
               }
           }
@@ -239,10 +239,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             setLog("所有發布任務已完成！");
             setLoading(false);
         };
-      } catch (e: any) {
-          setLog("發布準備錯誤: " + e.message);
-          setLoading(false);
-      }
+      } catch (e: any) { setLog("發布錯誤: " + e.message); setLoading(false); }
   };
 
   const handleDownload = async (e: React.MouseEvent) => {
@@ -275,10 +272,27 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* 左側：大腦 */}
+          {/* ================= 左側：大腦 ================= */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800">
-              <h2 className="text-xl font-semibold mb-4">1. 大腦 (腳本)</h2>
+              <h2 className="text-xl font-semibold mb-6">1. 大腦 (腳本策略)</h2>
+              
+              {/* 🚀 新增：影片核心類型選擇器 */}
+              <div className="mb-6">
+                  <label className="text-xs font-bold text-purple-400 uppercase block mb-3">🎬 選擇影片核心類型</label>
+                  <div className="grid grid-cols-3 gap-2">
+                      <button onClick={() => handleVideoTypeChange('topic')} className={`py-3 rounded-xl text-xs font-bold transition-all border ${videoType === 'topic' ? 'bg-purple-600/20 border-purple-500 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.2)]' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>
+                          📚 主題科普<br/><span className="text-[9px] font-normal opacity-70">情境畫面解說</span>
+                      </button>
+                      <button onClick={() => handleVideoTypeChange('product')} className={`py-3 rounded-xl text-xs font-bold transition-all border ${videoType === 'product' ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>
+                          📦 產品廣告<br/><span className="text-[9px] font-normal opacity-70">實物防變形鎖定</span>
+                      </button>
+                      <button onClick={() => handleVideoTypeChange('avatar')} className={`py-3 rounded-xl text-xs font-bold transition-all border ${videoType === 'avatar' ? 'bg-blue-600/20 border-blue-500 text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.2)]' : 'bg-zinc-900 border-zinc-700 text-zinc-400 hover:border-zinc-500'}`}>
+                          🧑‍💼 數字人<br/><span className="text-[9px] font-normal opacity-70">口語化演講腳本</span>
+                      </button>
+                  </div>
+              </div>
+
               <div className="space-y-3 mb-4">
                 <label className="text-xs font-bold text-zinc-400 uppercase">創作主題</label>
                 <div className="flex bg-black rounded-lg p-1 border border-zinc-800 mb-2">
@@ -286,7 +300,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                     <button onClick={() => { setTopicMode('ai'); if(aiSuggestions.length === 0) fetchAiSuggestions(); }} className={`flex-1 py-2 text-xs font-bold rounded-md transition ${topicMode === 'ai' ? 'bg-purple-900/50 text-purple-400' : 'text-zinc-500'}`}>AI 靈感</button>
                 </div>
                 {topicMode === 'custom' && (
-                    <textarea value={customTopic} onChange={(e) => setCustomTopic(e.target.value)} placeholder={`輸入主題... (預設: ${channel.niche})`} className="w-full h-24 bg-black border border-zinc-700 p-3 rounded-xl text-sm text-white outline-none resize-none" />
+                    <textarea value={customTopic} onChange={(e) => setCustomTopic(e.target.value)} placeholder={`輸入主題... (預設: ${channel.niche})`} className="w-full h-20 bg-black border border-zinc-700 p-3 rounded-xl text-sm text-white outline-none resize-none" />
                 )}
                 {topicMode === 'ai' && (
                     <div className="space-y-2">
@@ -312,13 +326,11 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   </select>
               </div>
 
-              {/* 🚀 更新：圖片上傳區塊 + 強烈提示 + 產品防呆輸入框 */}
               <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
                   <label className="text-xs font-bold text-zinc-400 uppercase block mb-2">參考圖片 (Image-to-Video)</label>
                   
-                  {/* 視覺警告提示 */}
                   <div className="text-[10px] text-amber-400/90 bg-amber-950/40 p-2.5 rounded-lg border border-amber-900/50 mb-4 leading-relaxed">
-                      ⚠️ <b>實戰建議：</b>為避免 AI 亂補背景導致產品變形，請上傳<b>「帶有真實環境背景的實拍照」</b>(例如放桌上)，請盡量不要使用透明去背圖 (PNG)。
+                      ⚠️ <b>實戰建議：</b>為避免 AI 亂補背景導致產品變形，請上傳<b>「帶有真實環境背景的實拍照」</b>(例如放桌上)，請盡量不要使用透明去背圖。
                   </div>
 
                   <div className="flex items-start gap-4 mb-4">
@@ -326,7 +338,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                           <span>📷 上傳照片</span>
                           <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                       </label>
-                      
                       {referenceImage ? (
                           <div className="relative group w-16 h-16 shrink-0">
                               <img src={referenceImage} alt="Preview" className="w-full h-full object-cover rounded-md border border-zinc-600" />
@@ -337,24 +348,19 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       )}
                   </div>
 
-                  {/* 產品防呆細節輸入框 */}
                   <div className="border-t border-zinc-800/80 pt-3 mt-2">
                       <label className="text-[11px] font-bold text-emerald-400 block mb-1">🛡️ 產品外觀防呆指示 (選填)</label>
-                      <p className="text-[9px] text-zinc-500 mb-2">如果你怕 AI 搞錯產品功能，請明確描述。例如：「這是一罐板機式噴霧，必須用食指扣動板機來噴灑，不是按壓式。」</p>
-                      <textarea
-                          value={productDescription}
-                          onChange={(e) => setProductDescription(e.target.value)}
-                          placeholder="請輸入產品特殊特徵或操作方式..."
-                          className="w-full bg-black border border-zinc-700 p-2.5 rounded-lg text-xs text-white outline-none focus:border-emerald-500/50 resize-none h-16 transition-colors"
-                      />
+                      <p className="text-[9px] text-zinc-500 mb-2">例如：「板機式噴霧，必須用食指扣動板機來噴灑，不是按壓式。」</p>
+                      <textarea value={productDescription} onChange={(e) => setProductDescription(e.target.value)} placeholder="請輸入產品特殊特徵或操作方式..." className="w-full bg-black border border-zinc-700 p-2.5 rounded-lg text-xs text-white outline-none focus:border-emerald-500/50 resize-none h-16 transition-colors" />
                   </div>
               </div>
 
               <button onClick={generateScript} disabled={loading || (topicMode === 'custom' && !customTopic && !channel.niche)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-medium transition disabled:opacity-50">
-                {loading ? "處理中..." : "生成腳本與元數據"}
+                {loading ? "處理中..." : "大腦運算：生成專屬腳本"}
               </button>
             </div>
 
+            {/* ================= 2. 架構區塊 ================= */}
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 space-y-4">
               <h2 className="text-xl font-semibold">2. 架構 (配置)</h2>
               
@@ -389,7 +395,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                    <div className="animate-fade-in mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded-lg space-y-4">
                      <div>
                          <label className="text-xs text-indigo-400 block mb-1 font-bold">HeyGen Avatar / Group ID</label>
-                         <input type="text" value={config.heygenAvatarId} onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} placeholder="輸入 Group ID 或 Avatar ID..." className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" />
+                         <input type="text" value={config.heygenAvatarId} onChange={e => setConfig({...config, heygenAvatarId: e.target.value})} placeholder="輸入 Group ID..." className="w-full bg-black border border-indigo-500/50 p-2 rounded-lg text-sm text-white outline-none" />
                      </div>
                      <div>
                          <label className="text-xs text-indigo-400 block mb-1 font-bold">畫面放大比例: {config.avatarScale.toFixed(1)}x</label>
@@ -461,24 +467,22 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div>
                 <label className="text-xs text-zinc-400 block mb-1 font-bold">配樂風格 (BGM)</label>
                 <select value={config.bgmMood} onChange={(e) => setConfig({...config, bgmMood: e.target.value as any})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
-                  <option value="emotional">emotional</option>
-                  <option value="Epic">Epic</option>
-                  <option value="Relaxing">Relaxing</option>
-                  <option value="funny">funny</option>
-                  <option value="energetic">energetic</option>
-                  <option value="Chill">chill</option>
-                  <option value="Happy">happy</option>
-                  <option value="none">No BGM</option>
+                  <option value="random">🎲 隨機 (Random)</option>
+                  <option value="travel">✈️ 旅遊紀錄 (Travel)</option>
+                  <option value="product">📦 產品開箱 (Product)</option>
+                  <option value="vlog">📹 日常生活 (Vlog)</option>
+                  <option value="cinematic">🎬 電影感 (Cinematic)</option>
+                  <option value="none">🔇 無配樂 (No BGM)</option>
                 </select>
               </div>
             </div>
           </div>
 
-          {/* 中間：內容 */}
+          {/* ================= 中間：內容 ================= */}
           <div className="lg:col-span-4 space-y-6">
              {script && (
               <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 h-full flex flex-col">
-                <h2 className="text-xl font-semibold mb-4">4. 靈魂 (內容)</h2>
+                <h2 className="text-xl font-semibold mb-4">4. 靈魂 (內容審閱)</h2>
                 {script.socialMediaCopy && (
                     <div className="bg-black/40 p-4 rounded-xl border border-zinc-800 mb-4 space-y-3">
                         <div className="text-xs font-bold text-purple-400 uppercase">社群媒體元數據</div>
@@ -489,7 +493,12 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2">
                   {script.scenes.map((scene) => (
                     <div key={scene.id} className="p-4 bg-black/40 rounded-xl border border-zinc-800 space-y-3">
-                      <div className="text-xs font-mono text-zinc-500">場景 {scene.id}</div>
+                      <div className="text-xs font-mono text-zinc-500 flex justify-between">
+                          <span>場景 {scene.id}</span>
+                          {videoType === 'avatar' && <span className="text-[10px] text-blue-400">🧑‍💼 數字人動作</span>}
+                          {videoType === 'product' && <span className="text-[10px] text-emerald-400">📦 產品防呆提示</span>}
+                          {videoType === 'topic' && <span className="text-[10px] text-purple-400">📚 畫面生成</span>}
+                      </div>
                       
                       <div>
                           <label className="text-[10px] text-zinc-500 font-bold mb-1 block">配音台詞 (Narration)</label>
@@ -502,7 +511,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       </div>
 
                       <div>
-                          <label className="text-[10px] text-emerald-600 font-bold mb-1 block flex items-center gap-1">👁️ 畫面提示詞 (Visual Cue)</label>
+                          <label className="text-[10px] text-emerald-600 font-bold mb-1 flex items-center gap-1">👁️ 畫面/動作提示詞 (Visual Cue)</label>
                           <textarea 
                               value={scene.visual_cue}
                               onChange={(e) => handleSceneChange(scene.id, 'visual_cue', e.target.value)}
@@ -517,7 +526,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             )}
           </div>
 
-          {/* 右側：預覽與發布 */}
+          {/* ================= 右側：預覽與發布 ================= */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 min-h-[400px] flex flex-col items-center justify-center relative">
               {videoUrl ? (
