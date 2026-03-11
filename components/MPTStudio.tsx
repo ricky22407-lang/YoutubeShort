@@ -16,10 +16,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [videoType, setVideoType] = useState<'avatar' | 'product' | 'topic'>(channel.defaultVideoType || 'topic');
 
   const [config, setConfig] = useState({
-    bgmVolume: 0.1, fontSize: 80, subtitleColor: '#FFFF00', ttsEngine: 'edge' as 'edge' | 'elevenlabs', voiceId: 'zh-TW-HsiaoChenNeural', 
+    bgmVolume: 0.1, fontSize: 80, subtitleColor: '#FFFF00', ttsEngine: 'edge' as 'edge' | 'elevenlabs', voiceId: 'zh-CN-YunxiNeural', 
     videoEngine: channel.defaultVideoType === 'product' ? 'kling' : (channel.defaultVideoType === 'avatar' ? 'heygen' : 'veo'),
     heygenAvatarId: channel.mptConfig?.heygenAvatarId || '', avatarScale: 1.0, klingModelVersion: channel.defaultKlingModel || 'kling-3.0',
-    targetDuration: '60', useStockFootage: channel.defaultVideoType === 'topic', fontName: 'NotoSansTC-Bold.ttf', bgmMood: 'random' as 'random' | 'epic' | 'relaxing' | 'funny' | 'suspense' | 'none'
+    targetDuration: '30', allowNoVoiceover: false, useStockFootage: channel.defaultVideoType === 'topic', fontName: 'NotoSansTC-Bold.ttf', bgmMood: 'random' as 'random' | 'epic' | 'relaxing' | 'funny' | 'suspense' | 'none'
   });
 
   useEffect(() => {
