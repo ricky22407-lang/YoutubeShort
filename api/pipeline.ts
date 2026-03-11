@@ -100,60 +100,64 @@ export default async function handler(req: any, res: any) {
                 const KIE_API_KEY = process.env.KIE_API_KEY;
                 if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY" });
                 
-                // 🚀 圖片轉真實 HTTPS 網址處理 (解決 Kling 所有報錯的終極手段)
+                // 🚀 1. 終極殺招：光速將 Base64 轉換為 Kie.ai 接受的 HTTPS 網址
                 let imageUrlToUse = referenceImage;
                 if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
-                    console.log(`[API] 發現 Base64 圖片，正在上傳至 Vercel Blob...`);
+                    console.log(`[API] 發現 Base64 圖片，正在上傳至 Vercel Blob 轉為公開網址...`);
                     try {
                         const base64Data = referenceImage.split(',')[1];
                         const buffer = Buffer.from(base64Data, 'base64');
                         const mimeType = referenceImage.split(';')[0].split(':')[1];
                         const ext = mimeType.split('/')[1] || 'png';
                         
+                        // 透過 Vercel Blob 產生公開網址
                         const blob = await put(`refs/ref_${Date.now()}.${ext}`, buffer, { access: 'public' });
                         imageUrlToUse = blob.url;
-                        console.log(`[API] 圖片已成功轉為網址: ${imageUrlToUse}`);
+                        console.log(`[API] 圖片已成功轉為公開網址: ${imageUrlToUse}`);
                     } catch (uploadError: any) {
-                        throw new Error(`無法將圖片轉為公開網址: ${uploadError.message}`);
+                        throw new Error(`圖片轉網址失敗: ${uploadError.message}`);
                     }
                 }
 
                 const selectedKlingModel = klingModelVersion || 'kling-3.0';
                 
-                // 翻譯模型名稱
-                let actualModelName = "kling-3.0"; 
+                // 🚀 2. 對齊官方的正確模型代號
+                let actualModelName = "kling-3.0/video"; 
                 if (selectedKlingModel === 'kling-2.6-pro') {
                     actualModelName = imageUrlToUse ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
                 } else if (selectedKlingModel === 'kling-2.5-turbo') {
                     actualModelName = imageUrlToUse ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
                 }
 
-                // 封裝給 Kie 的參數
-                const kieInput: any = { 
+                // 🚀 3. 對齊官方的參數格式 (duration字串、sound設定、image_urls陣列)
+                const kieInput: any = {
                     prompt: visualCue,
-                    duration: "5" // 👈 加回這個被不小心刪掉的必填秒數！
+                    duration: "5",          
+                    sound: false
                 };
                 
-                // 針對 Kling 3.0 的嚴格防呆
-                if (actualModelName === "kling-3.0") {
-                    kieInput.mode = "pro";
-                    kieInput.multi_shots = false;
-                }
-                
-                // 針對圖片與畫幅的防呆
+                // 如果有圖片，無論 2.6 或 3.0 官方皆要求使用 `image_urls` 陣列
                 if (imageUrlToUse) {
-                    kieInput.image_url = imageUrlToUse;
-                    kieInput.image_urls = [imageUrlToUse]; 
+                    kieInput.image_urls = [imageUrlToUse];  
                 } else {
-                    kieInput.aspect_ratio = "9:16";
+                    kieInput.aspect_ratio = "9:16"; // 沒圖片時指定比例
                 }
 
-                console.log(`[Kling] 準備呼叫模型: ${actualModelName}`);
+                // Kling 3.0 專屬必填參數
+                if (actualModelName === "kling-3.0/video") {
+                    kieInput.mode = "pro";        
+                    kieInput.multi_shots = false; 
+                }
+
+                console.log(`[Kling] 準備呼叫模型: ${actualModelName}, 參數 keys: ${Object.keys(kieInput).join(', ')}`);
 
                 const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: actualModelName, input: kieInput })
+                    body: JSON.stringify({ 
+                        model: actualModelName, 
+                        input: kieInput 
+                    })
                 });
                 
                 const textResponse = await submitRes.text();
@@ -161,7 +165,12 @@ export default async function handler(req: any, res: any) {
                 try { taskData = JSON.parse(textResponse); } catch (e) { throw new Error(`Kie.ai 連線失敗: ${textResponse}`); }
 
                 const taskId = taskData?.data?.id || taskData?.id;
-                if (!taskId) throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
+                if (!taskId) {
+                    console.error("[Kie API Error]", taskData);
+                    throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
+                }
+                
+                console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢...`);
                 
                 let attempts = 0;
                 while (attempts < 24) { 
@@ -178,7 +187,7 @@ export default async function handler(req: any, res: any) {
                     }
                     attempts++;
                 }
-                if (!finalUrl) throw new Error("Kling 算圖超時");
+                if (!finalUrl) throw new Error("Kling 算圖超時 (超過 4 分鐘)");
             } else {
                 finalUrl = 'mock'; 
             }
@@ -226,7 +235,5 @@ export default async function handler(req: any, res: any) {
 
       default: return res.status(400).json({ success: false, error: 'Invalid Stage' });
     }
-  } catch (e: any) { 
-    return res.status(200).json({ success: false, error: `Server Error: ${e.message}` }); 
-  }
+  } catch (e: any) { return res.status(200).json({ success: false, error: `Server Error: ${e.message}` }); }
 }
