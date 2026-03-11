@@ -55,15 +55,13 @@ const App: React.FC = () => {
   const [tempLang, setTempLang] = useState<'zh-TW' | 'en'>('zh-TW');
   const [tempMptConfig, setTempMptConfig] = useState<ChannelConfig['mptConfig']>({});
   
-  // 🚀 新增：暫存預設三本柱的 State
+  // 頻道預設設定
   const [tempDefaultVideoType, setTempDefaultVideoType] = useState<'avatar' | 'product' | 'topic'>('topic');
   const [tempDefaultProductDesc, setTempDefaultProductDesc] = useState('');
   const [tempDefaultKling, setTempDefaultKling] = useState('kling-3.0');
 
   const [isAnyChannelRendering, setIsAnyChannelRendering] = useState(false);
   const [globalLog, setGlobalLog] = useState<string[]>([]);
-  
-  const abortControllers = useRef<Record<string, AbortController>>({});
   const lastCheckMinute = useRef<number>(-1);
 
   const addLog = (msg: string) => {
@@ -83,7 +81,6 @@ const App: React.FC = () => {
         setTempConcept(editingChannel.concept || '');
         setTempLang(editingChannel.language || 'zh-TW');
         setTempMptConfig(editingChannel.mptConfig || {});
-        // 🚀 載入預設記憶
         setTempDefaultVideoType(editingChannel.defaultVideoType || 'topic');
         setTempDefaultProductDesc(editingChannel.defaultProductDescription || '');
         setTempDefaultKling(editingChannel.defaultKlingModel || 'kling-3.0');
@@ -109,9 +106,46 @@ const App: React.FC = () => {
     }
   };
 
+  // OAuth 與 初始化
   useEffect(() => {
     const saved = localStorage.getItem('pilot_onyx_v8_data');
     if (saved) setChannels(JSON.parse(saved));
+
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const pendingId = localStorage.getItem('pilot_pending_auth_id');
+
+    if (code && pendingId && !params.get('meta_auth_success')) {
+      fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          setChannels(prev => prev.map(c => c.id === pendingId ? { ...c, auth: d.tokens } : c));
+          addLog("✅ " + I18N['zh-TW'].auth_success);
+          window.history.replaceState({}, '', '/');
+        }
+      });
+      localStorage.removeItem('pilot_pending_auth_id');
+    }
+
+    const metaAuthSuccess = params.get('meta_auth_success');
+    const platform = params.get('platform');
+    const metaCode = params.get('code');
+    
+    if (metaAuthSuccess && platform && metaCode && pendingId) {
+        setChannels(prev => prev.map(c => {
+            if (c.id === pendingId) {
+                const socialUpdate = { ...c.social || { youtube: { connected: false, upload: false }, instagram: { connected: false, upload: false }, facebook: { connected: false, upload: false } } };
+                if (platform === 'instagram') socialUpdate.instagram = { connected: true, upload: true };
+                if (platform === 'facebook') socialUpdate.facebook = { connected: true, upload: true };
+                return { ...c, social: socialUpdate };
+            }
+            return c;
+        }));
+        addLog(`✅ ${platform === 'instagram' ? I18N['zh-TW'].instagram : I18N['zh-TW'].facebook} ${I18N['zh-TW'].connected}`);
+        window.history.replaceState({}, '', '/');
+        localStorage.removeItem('pilot_pending_auth_id');
+    }
   }, []);
 
   useEffect(() => {
@@ -146,7 +180,6 @@ const App: React.FC = () => {
         <div className="flex-1 space-y-8">
           {channels.length === 0 && <div className="py-40 text-center opacity-20 font-black italic uppercase tracking-[1em]">{I18N['zh-TW'].no_core}</div>}
           {channels.map(c => {
-            const t = I18N[c.language || 'zh-TW'];
             const isCharacterMode = c.mode === 'character';
             return (
               <div key={c.id} className={`bg-zinc-950 border rounded-[3rem] p-10 transition-all shadow-2xl ${c.status === 'running' ? 'border-cyan-500 shadow-cyan-500/10' : 'border-zinc-900'}`}>
@@ -176,7 +209,9 @@ const App: React.FC = () => {
               <h3 className="text-[10px] font-black text-zinc-700 uppercase tracking-widest">{I18N['zh-TW'].telemetry}</h3>
             </div>
             <div className="flex-1 overflow-y-auto space-y-3 font-mono text-[10px] text-zinc-600">
-              等待指令...
+              {globalLog.map((log, i) => (
+                <div key={i} className={`pb-3 border-b border-zinc-900/50 leading-relaxed ${log.includes('❌') ? 'text-red-500' : log.includes('✅') ? 'text-cyan-500' : 'text-zinc-600'}`}>{log}</div>
+              ))}
             </div>
           </div>
         </aside>
@@ -210,18 +245,78 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                {/* === TAB: SOCIAL === */}
+                {/* 🚀 完整還原：SOCIAL TAB (YT/IG/FB 授權介面) */}
                 {modalTab === 'social' && (
-                    <div className="space-y-4 animate-fade-in flex flex-col items-center justify-center h-full opacity-50">
-                        <div className="text-4xl mb-4">🔗</div>
-                        <p className="text-sm font-bold">社群平台 API 串接模組保持原樣運作。</p>
+                    <div className="space-y-6 animate-fade-in">
+                        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest mb-6">{I18N['zh-TW'].connect_platforms}</h3>
+                        
+                        {/* YouTube */}
+                        <div className="flex items-center justify-between p-6 bg-zinc-900/50 rounded-2xl border border-zinc-800">
+                            <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 bg-red-600 rounded-full flex items-center justify-center text-white font-bold text-xs">YT</div>
+                                <div>
+                                    <div className="text-sm font-bold text-white">{I18N['zh-TW'].youtube}</div>
+                                    <div className="text-xs text-zinc-500">{editingChannel?.auth ? I18N['zh-TW'].connected : I18N['zh-TW'].not_connected}</div>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    if (editingChannel) localStorage.setItem('pilot_pending_auth_id', editingChannel.id);
+                                    window.location.href = '/api/auth?action=url';
+                                }}
+                                className={`px-6 py-3 rounded-xl text-xs font-bold transition-all ${editingChannel?.auth ? 'bg-zinc-800 text-zinc-400' : 'bg-white text-black hover:scale-105'}`}
+                            >
+                                {editingChannel?.auth ? I18N['zh-TW'].reconnect : I18N['zh-TW'].connect}
+                            </button>
+                        </div>
+
+                        {/* Instagram */}
+                        <div className="flex items-center justify-between p-6 bg-zinc-900/50 rounded-2xl border border-zinc-800">
+                            <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 bg-gradient-to-tr from-yellow-400 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-xs">IG</div>
+                                <div>
+                                    <div className="text-sm font-bold text-white">{I18N['zh-TW'].instagram}</div>
+                                    <div className="text-xs text-zinc-500">{editingChannel?.social?.instagram?.connected ? I18N['zh-TW'].connected : I18N['zh-TW'].not_connected}</div>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    if (editingChannel) localStorage.setItem('pilot_pending_auth_id', editingChannel.id);
+                                    localStorage.setItem('pilot_auth_platform', 'instagram');
+                                    window.location.href = '/api/auth/meta?platform=instagram';
+                                }}
+                                className={`px-6 py-3 rounded-xl text-xs font-bold transition-all ${editingChannel?.social?.instagram?.connected ? 'bg-zinc-800 text-zinc-400' : 'bg-white text-black hover:scale-105'}`}
+                            >
+                                {editingChannel?.social?.instagram?.connected ? I18N['zh-TW'].reconnect : I18N['zh-TW'].connect}
+                            </button>
+                        </div>
+
+                        {/* Facebook */}
+                        <div className="flex items-center justify-between p-6 bg-zinc-900/50 rounded-2xl border border-zinc-800">
+                            <div className="flex items-center gap-4">
+                                <div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs">FB</div>
+                                <div>
+                                    <div className="text-sm font-bold text-white">{I18N['zh-TW'].facebook}</div>
+                                    <div className="text-xs text-zinc-500">{editingChannel?.social?.facebook?.connected ? I18N['zh-TW'].connected : I18N['zh-TW'].not_connected}</div>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    if (editingChannel) localStorage.setItem('pilot_pending_auth_id', editingChannel.id);
+                                    localStorage.setItem('pilot_auth_platform', 'facebook');
+                                    window.location.href = '/api/auth/meta?platform=facebook';
+                                }}
+                                className={`px-6 py-3 rounded-xl text-xs font-bold transition-all ${editingChannel?.social?.facebook?.connected ? 'bg-zinc-800 text-zinc-400' : 'bg-white text-black hover:scale-105'}`}
+                            >
+                                {editingChannel?.social?.facebook?.connected ? I18N['zh-TW'].reconnect : I18N['zh-TW'].connect}
+                            </button>
+                        </div>
                     </div>
                 )}
 
                 {/* === TAB: PERSONA & DEFAULTS === */}
                 {modalTab === 'persona' && (
                     <div className="grid grid-cols-1 md:grid-cols-12 gap-8 animate-fade-in">
-                        {/* 🚀 左側：預設影片與引擎設定 */}
                         <div className="md:col-span-5 space-y-6">
                             <div className="bg-purple-900/10 p-6 rounded-2xl border border-purple-500/20 space-y-5">
                                 <div>
@@ -236,58 +331,32 @@ const App: React.FC = () => {
                                         <option value="avatar">🧑‍💼 數字人演講 (HeyGen)</option>
                                     </select>
                                 </div>
-
-                                {/* 根據選擇的類型，動態顯示對應的細節設定 */}
                                 {tempDefaultVideoType === 'product' && (
                                     <div className="space-y-4 animate-fade-in">
-                                        <div>
-                                            <label className="text-[10px] font-bold text-emerald-400 uppercase block mb-2">預設 Kling 模型等級</label>
-                                            <select value={tempDefaultKling} onChange={e => setTempDefaultKling(e.target.value)} className="w-full bg-black border border-emerald-500/30 p-2.5 rounded-lg text-xs text-white outline-none">
-                                                <option value="kling-3.0">Kling 3.0 (最高精準度)</option>
-                                                <option value="kling-2.6-pro">Kling 2.6 Pro</option>
-                                                <option value="kling-2.5-turbo">Kling 2.5 Turbo (最省錢)</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label className="text-[10px] font-bold text-emerald-400 block mb-2">預設產品防呆描述 (全局套用)</label>
-                                            <textarea value={tempDefaultProductDesc} onChange={e => setTempDefaultProductDesc(e.target.value)} placeholder="例如：這是一罐板機式噴霧，必須用食指扣動板機噴灑。" className="w-full bg-black border border-emerald-500/30 p-3 rounded-lg text-xs h-20 outline-none resize-none" />
-                                        </div>
+                                        <div><label className="text-[10px] font-bold text-emerald-400 uppercase block mb-2">預設 Kling 模型等級</label><select value={tempDefaultKling} onChange={e => setTempDefaultKling(e.target.value)} className="w-full bg-black border border-emerald-500/30 p-2.5 rounded-lg text-xs text-white outline-none"><option value="kling-3.0">Kling 3.0 (最高精準度)</option><option value="kling-2.6-pro">Kling 2.6 Pro</option><option value="kling-2.5-turbo">Kling 2.5 Turbo (最省錢)</option></select></div>
+                                        <div><label className="text-[10px] font-bold text-emerald-400 block mb-2">預設產品防呆描述 (全局套用)</label><textarea value={tempDefaultProductDesc} onChange={e => setTempDefaultProductDesc(e.target.value)} placeholder="例如：這是一罐板機式噴霧，必須用食指扣動板機噴灑。" className="w-full bg-black border border-emerald-500/30 p-3 rounded-lg text-xs h-20 outline-none resize-none" /></div>
                                     </div>
                                 )}
-
                                 {tempDefaultVideoType === 'avatar' && (
                                     <div className="space-y-4 animate-fade-in">
-                                        <div>
-                                            <label className="text-[10px] font-bold text-blue-400 uppercase block mb-2">專屬 HeyGen Avatar ID</label>
-                                            <input value={tempMptConfig?.heygenAvatarId || ''} onChange={e => setTempMptConfig({...tempMptConfig, heygenAvatarId: e.target.value})} placeholder="輸入 ID..." className="w-full bg-black border border-blue-500/30 p-2.5 rounded-lg text-xs outline-none" />
-                                        </div>
+                                        <div><label className="text-[10px] font-bold text-blue-400 uppercase block mb-2">專屬 HeyGen Avatar ID</label><input value={tempMptConfig?.heygenAvatarId || ''} onChange={e => setTempMptConfig({...tempMptConfig, heygenAvatarId: e.target.value})} placeholder="輸入 ID..." className="w-full bg-black border border-blue-500/30 p-2.5 rounded-lg text-xs outline-none" /></div>
                                     </div>
                                 )}
                             </div>
 
-                            {/* 聲音設定 */}
                             <div className="bg-zinc-900/30 p-6 rounded-2xl border border-zinc-800 space-y-4">
                                 <label className="text-[10px] font-bold text-zinc-500 uppercase block">預設配音引擎</label>
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <select value={tempMptConfig?.ttsEngine || 'edge'} onChange={e => setTempMptConfig({...tempMptConfig, ttsEngine: e.target.value as any})} className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-xs font-bold outline-none">
-                                            <option value="edge">Edge TTS (免費)</option>
-                                            <option value="elevenlabs">ElevenLabs (付費)</option>
-                                        </select>
-                                    </div>
+                                    <div><select value={tempMptConfig?.ttsEngine || 'edge'} onChange={e => setTempMptConfig({...tempMptConfig, ttsEngine: e.target.value as any})} className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-xs font-bold outline-none"><option value="edge">Edge TTS (免費)</option><option value="elevenlabs">ElevenLabs (付費)</option></select></div>
                                     {tempMptConfig?.ttsEngine === 'elevenlabs' ? (
                                         <input value={tempMptConfig?.elevenLabsVoiceId || ''} onChange={e => setTempMptConfig({...tempMptConfig, elevenLabsVoiceId: e.target.value})} placeholder="Voice ID" className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-xs font-bold outline-none" />
                                     ) : (
-                                        <select value={tempMptConfig?.voiceId || 'zh-TW-HsiaoChenNeural'} onChange={e => setTempMptConfig({...tempMptConfig, voiceId: e.target.value})} className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-xs font-bold outline-none">
-                                            <option value="zh-TW-HsiaoChenNeural">HsiaoChen (女)</option>
-                                            <option value="zh-TW-YunJheNeural">YunJhe (男)</option>
-                                        </select>
+                                        <select value={tempMptConfig?.voiceId || 'zh-TW-HsiaoChenNeural'} onChange={e => setTempMptConfig({...tempMptConfig, voiceId: e.target.value})} className="w-full bg-zinc-900 border border-zinc-800 p-2.5 rounded-lg text-xs font-bold outline-none"><option value="zh-TW-HsiaoChenNeural">HsiaoChen (女)</option><option value="zh-TW-YunJheNeural">YunJhe (男)</option></select>
                                     )}
                                 </div>
                             </div>
                         </div>
 
-                        {/* 右側：數字人視覺設定 (保留舊邏輯) */}
                         <div className="md:col-span-7 space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div><label className="text-[10px] font-bold text-zinc-500 uppercase block mb-2">{I18N['zh-TW'].name}</label><input value={tempProfile.name} onChange={e => setTempProfile({...tempProfile, name: e.target.value})} className="w-full bg-zinc-900 border border-zinc-800 p-3 rounded-xl text-sm font-bold outline-none" /></div>
@@ -306,16 +375,9 @@ const App: React.FC = () => {
               <button 
                 onClick={() => {
                   const configPayload = {
-                    name: tempName || I18N['zh-TW'].new_channel,
-                    niche: tempNiche || I18N['zh-TW'].general_niche,
-                    concept: tempConcept,
-                    language: tempLang,
-                    characterProfile: tempProfile,
-                    mptConfig: tempMptConfig,
-                    // 🚀 儲存預設三本柱設定
-                    defaultVideoType: tempDefaultVideoType,
-                    defaultProductDescription: tempDefaultProductDesc,
-                    defaultKlingModel: tempDefaultKling,
+                    name: tempName || I18N['zh-TW'].new_channel, niche: tempNiche || I18N['zh-TW'].general_niche, concept: tempConcept,
+                    language: tempLang, characterProfile: tempProfile, mptConfig: tempMptConfig,
+                    defaultVideoType: tempDefaultVideoType, defaultProductDescription: tempDefaultProductDesc, defaultKlingModel: tempDefaultKling,
                     mode: tempDefaultVideoType === 'avatar' ? 'character' : 'classic' 
                   };
 
