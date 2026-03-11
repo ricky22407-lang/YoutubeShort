@@ -332,11 +332,13 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div>
                 <label className="text-xs text-zinc-400 block mb-1 font-bold">配樂風格 (BGM)</label>
                 <select value={config.bgmMood} onChange={(e) => setConfig({...config, bgmMood: e.target.value as any})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
-                  <option value="random">🎲 隨機 (Random)</option>
-                  <option value="epic">⚔️ 史詩 (Epic)</option>
-                  <option value="relaxing">☕ 輕鬆 (Relaxing)</option>
-                  <option value="funny">🤡 搞笑 (Funny)</option>
-                  <option value="suspense">🕵️ 懸疑 (Suspense)</option>
+                  <option value="emotional">emotional</option>
+                  <option value="Epic">Epic</option>
+                  <option value="Relaxing">Relaxing</option>
+                  <option value="funny">funny</option>
+                  <option value="energetic">energetic</option>
+                  <option value="Chill">Chill</option>
+                  <option value="Happy">happy</option>
                   <option value="none">🔇 無配樂 (No BGM)</option>
                 </select>
               </div>
