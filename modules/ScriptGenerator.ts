@@ -67,12 +67,16 @@ export class ScriptGenerator {
     };
     let durationRule = `\n【CRITICAL LENGTH RULE】 The entire video MUST be strictly ${durationMap[targetDuration] || durationMap['30']}`;
     let voiceoverRule = allowNoVoiceover ? `\n【OPTIONAL VOICEOVER】 If you decide a scene does not need voiceover (purely visual + music), leave the 'narration' field completely empty ("").` : `\n【MANDATORY VOICEOVER】 Every scene MUST have spoken 'narration'. Do not leave it empty.`;
+    
+    // 🚀 終極防呆：嚴格禁止 AI 產生任何可能搞死影片引擎的括號符號
+    let formattingRule = `\n【CRITICAL FORMATTING RULE】 NEVER use brackets like 【】, [], (), or <> in the 'visual_cue' or 'narration'. Write ONLY in plain text. Special characters will CRASH the downstream video generation API.`;
 
     const prompt = `
       ${systemInstruction}
       ${treatmentContext}
       ${durationRule}
       ${voiceoverRule}
+      ${formattingRule}
 
       Topic: ${topic}
       Language: ${language}
@@ -85,7 +89,7 @@ export class ScriptGenerator {
           {
             "id": 1,
             "narration": "The spoken text for this scene (leave empty if no voiceover).",
-            "visual_cue": "Detailed instruction based on the current mode."
+            "visual_cue": "Detailed instruction based on the current mode. Pure plain text ONLY."
           }
         ],
         "socialMediaCopy": { "title": "SEO optimized title", "description": "Hashtags and description" }
