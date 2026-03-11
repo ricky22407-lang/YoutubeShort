@@ -248,9 +248,16 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div className="mb-4">
                   <label className="text-xs font-bold text-zinc-400 uppercase block mb-2">影片目標時長</label>
                   <select value={config.targetDuration} onChange={e => setConfig({...config, targetDuration: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded-lg text-sm text-white outline-none">
-                      <option value="30">⏱️ 30秒以內 (極短影音 / 快節奏)</option>
-                      <option value="60">⏳ 60秒以內 (標準短影音)</option>
+                      <option value="10">⚡ 10秒 (極短預告/鉤子)</option>
+                      <option value="15">🚀 15秒 (快節奏精華)</option>
+                      <option value="20">⏱️ 20秒 (標準快拍)</option>
+                      <option value="30">⏱️ 30秒 (標準短影音)</option>
+                      <option value="60">⏳ 60秒 (深度解說)</option>
                   </select>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                      <input type="checkbox" checked={config.allowNoVoiceover} onChange={e => setConfig({...config, allowNoVoiceover: e.target.checked})} className="accent-purple-500" />
+                      <span className="text-xs text-zinc-400 font-bold">允許純音樂無配音 (由大腦決定)</span>
+                  </label>
               </div>
 
               <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
@@ -329,8 +336,13 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       <input type="text" value={config.voiceId} onChange={e => setConfig({...config, voiceId: e.target.value})} placeholder="Voice ID" className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none" />
                   ) : (
                       <select value={config.voiceId} onChange={e => setConfig({...config, voiceId: e.target.value})} className="w-full bg-black border border-zinc-800 p-2 rounded-lg text-sm text-white outline-none">
+                          <option value="zh-CN-YunxiNeural">雲希 (中國解說男聲🔥)</option>
+                          <option value="zh-CN-XiaoxiaoNeural">曉曉 (中國解說女聲🔥)</option>
                           <option value="zh-TW-HsiaoChenNeural">曉辰 (台灣女聲)</option>
                           <option value="zh-TW-YunJheNeural">允哲 (台灣男聲)</option>
+                          <option value="zh-TW-HsiaoYuNeural">曉雨 (台灣女聲2)</option>
+                          <option value="en-US-JennyNeural">Jenny (標準英文女聲)</option>
+                          <option value="en-US-GuyNeural">Guy (標準英文男聲)</option>
                       </select>
                   )}
               </div>
