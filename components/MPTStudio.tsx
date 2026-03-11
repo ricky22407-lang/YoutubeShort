@@ -209,7 +209,8 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             scriptData: { ...script, referenceImage: referenceImage || script.referenceImage },
             previousVideoUrl: videoUrl,
             preGeneratedHeygenUrl: finalHeygenUrl,
-            preGeneratedSceneUrls 
+            preGeneratedSceneUrls,
+            videoType // 🚀 關鍵新增：將目前的影片核心類型傳送給後端組裝廠
         })
       });
       
