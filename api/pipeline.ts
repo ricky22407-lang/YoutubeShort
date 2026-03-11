@@ -192,19 +192,31 @@ export default async function handler(req: any, res: any) {
         }
       }
 
+      // 🚀 新增：產出導演企劃書
+      case 'generate_treatment': {
+        const generator = new ScriptGenerator(API_KEY);
+        const topicToUse = req.body.topic || channel.niche;
+        const treatment = await generator.generateTreatment(
+            topicToUse, 
+            channel.language || 'zh-TW', 
+            req.body.videoType || 'topic', 
+            req.body.productDescription
+        );
+        return res.status(200).json({ success: true, treatment });
+      }
+
       case 'generate_script': {
         const generator = new ScriptGenerator(API_KEY);
-        const targetDuration = req.body.targetDuration || '60';
-        const durationPrompt = targetDuration === '30' ? "\n【極重要】腳本總時長必須嚴格控制在 30 秒以內！總字數請限制在 80~100 字左右，節奏要極快。" : "\n【極重要】腳本總時長必須嚴格控制在 60 秒以內！總字數請限制在 150~180 字左右。";
-        const topicToUse = (req.body.topic || channel.niche) + durationPrompt;
+        const topicToUse = req.body.topic || channel.niche;
         
-        // 🚀 新增：將 videoType 傳給大腦
+        // 🚀 修改：將 treatment 傳遞給大腦
         const script = await generator.generate(
             topicToUse, 
             channel.language || 'zh-TW', 
             req.body.referenceImage, 
             req.body.productDescription,
-            req.body.videoType || 'topic' 
+            req.body.videoType || 'topic',
+            req.body.treatment 
         );
         return res.status(200).json({ success: true, script });
       }
