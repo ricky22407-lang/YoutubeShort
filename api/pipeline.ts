@@ -221,7 +221,10 @@ export default async function handler(req: any, res: any) {
             if (previousVideoUrl && previousVideoUrl.includes('blob.vercel-storage.com')) {
                 try { await del(previousVideoUrl); } catch (e) {}
             }
-            await assembler.assemble(scriptData, outputFilename, channel.mptConfig, channel.characterProfile, req.body.preGeneratedHeygenUrl, req.body.preGeneratedSceneUrls);
+            // 🚀 將 req.body.videoType 作為第一個參數傳入路由器
+            const safeVideoType = req.body.videoType || 'topic';
+            await assembler.assemble(safeVideoType, scriptData, outputFilename, channel.mptConfig, req.body.preGeneratedHeygenUrl, req.body.preGeneratedSceneUrls);
+            
             const videoBuffer = fs.readFileSync(outputFilename);
             const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
             return res.status(200).json({ success: true, videoUrl: blob.url });
