@@ -6,8 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os'; 
 import { ScriptData } from '../types.js';
-import { finished } from 'stream/promises';
-import { Readable } from 'stream';
 
 ffmpeg.setFfmpegPath(ffmpegPath.path);
 ffmpeg.setFfprobePath(ffprobePath.path); 
@@ -24,14 +22,8 @@ export class VideoAssembler {
     this.pexelsApiKey = pexelsApiKey;
   }
 
-  // 🚀 FFmpeg 專屬的最強路徑轉譯器 (解決 Windows/Vercel 的 No such file 報錯)
   private escapeForFfmpeg(str: string) {
-      return str
-          .replace(/\\/g, '/')      // 將 Windows 的反斜線轉為正斜線
-          .replace(/:/g, '\\:')     // 轉義磁碟機冒號 (C:)
-          .replace(/,/g, '\\,')     // 轉義逗號 (FFmpeg濾鏡的分隔符)
-          .replace(/'/g, "\\'")     // 轉義單引號
-          .replace(/ /g, '\\ ');    // 轉義空白字元
+      return str.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/,/g, '\\,').replace(/'/g, "\\'").replace(/ /g, '\\ ');
   }
 
   private async getDuration(filePath: string): Promise<number> {
@@ -44,26 +36,22 @@ export class VideoAssembler {
     });
   }
 
+  // 🚀 防呆機制：改用 ArrayBuffer 確保檔案 100% 完整下載，防範串流中斷
   private async downloadFile(url: string, dest: string, timeoutMs: number = 60000): Promise<void> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
-        const fileStream = fs.createWriteStream(dest);
-        await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
+        const buffer = Buffer.from(await res.arrayBuffer());
+        fs.writeFileSync(dest, buffer);
     } catch (e: any) { throw e; } 
     finally { clearTimeout(timeoutId); }
   }
 
   private async fetchDynamicBgm(mood: string): Promise<string> {
       if (!mood || mood === 'none') return '';
-      const moodMap: Record<string, string> = {
-          emotional: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56', energetic: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT',
-          funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt', Relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ',
-          Happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y', Chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF',
-          Epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn'
-      };
+      const moodMap: Record<string, string> = { emotional: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56', energetic: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT', funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt', Relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ', Happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y', Chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF', Epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn' };
       let folderId = moodMap[mood] || moodMap['random'];
       if (mood === 'random') folderId = moodMap[Object.keys(moodMap)[Math.floor(Math.random() * Object.keys(moodMap).length)]];
       if (!folderId) return '';
@@ -76,38 +64,17 @@ export class VideoAssembler {
       return '';
   }
 
-  // 🚀 防呆機制：移除高風險的 drawtext 字體繪製，改為安全無依賴的純黑畫面
   private async generateAiVideoMock(outputPath: string): Promise<void> {
-      return new Promise((resolve, reject) => {
-          ffmpeg()
-            .input('color=c=black:s=720x1280')
-            .inputFormat('lavfi')
-            .duration(5)
-            .output(outputPath)
-            .on('end', () => resolve())
-            .on('error', reject)
-            .run();
-      });
+      return new Promise((resolve, reject) => { ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5).output(outputPath).on('end', () => resolve()).on('error', reject).run(); });
   }
 
-  // 路由器：根據影片類型分發給不同的專屬組裝廠
   async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
       console.log(`[VideoAssembler] 啟動 [${videoType.toUpperCase()}] 專屬渲染管線...`);
-      
-      const commonSettings = {
-          bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf',
-          voiceId: config?.ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId ? config.elevenLabsVoiceId : (config?.voiceId || 'zh-TW-HsiaoChenNeural'),
-          bgmMood: config?.bgmMood || 'none'
-      };
-
-      if (videoType === 'avatar') {
-          return this.assembleAvatarPipeline(script, outputFilename, commonSettings, preGeneratedHeygenUrl);
-      } else {
-          return this.assembleSceneBasedPipeline(script, outputFilename, commonSettings, preGeneratedSceneUrls);
-      }
+      const commonSettings = { bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf', voiceId: config?.ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId ? config.elevenLabsVoiceId : (config?.voiceId || 'zh-TW-HsiaoChenNeural'), bgmMood: config?.bgmMood || 'none' };
+      if (videoType === 'avatar') return this.assembleAvatarPipeline(script, outputFilename, commonSettings, preGeneratedHeygenUrl);
+      else return this.assembleSceneBasedPipeline(script, outputFilename, commonSettings, preGeneratedSceneUrls);
   }
 
-  // 專屬管線 1：Avatar (單一長影片 + 字幕 + BGM)
   private async assembleAvatarPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedHeygenUrl?: string): Promise<string> {
       if (!preGeneratedHeygenUrl) throw new Error("未收到預先生成的 HeyGen 影片網址！");
       const singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
@@ -120,8 +87,7 @@ export class VideoAssembler {
       for (const scene of script.scenes) {
           const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
           const sceneChars = cleanNarration.replace(/\s+/g, '').length;
-          const duration = totalDuration * (sceneChars / Math.max(totalChars, 1));
-          sceneAssets.push({ video: singleVideoPath, duration: duration, text: cleanNarration });
+          sceneAssets.push({ video: singleVideoPath, duration: totalDuration * (sceneChars / Math.max(totalChars, 1)), text: cleanNarration });
       }
 
       const assPath = this.generateSubtitles(sceneAssets, settings);
@@ -135,25 +101,17 @@ export class VideoAssembler {
 
           if (bgmPath) {
               cmd.input(bgmPath);
-              filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
-              filterComplex.push(`[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`);
-              filterComplex.push(`[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
+              filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
           
-          // 🚀 關鍵修復：不加引號，完全交給 escapeForFfmpeg 處理路徑
-          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           
-          cmd.complexFilter(filterComplex)
-             .outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest'])
-             .output(outputFilename)
-             .on('end', () => resolve(outputFilename))
-             .on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`)))
-             .run();
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg 失敗: ${err.message}`))).run();
       });
   }
 
-  // 專屬管線 2：Product & Topic (多段短影片拼接 + TTS 配音 + 字幕 + BGM)
+  // 🚀 防黑畫面終極修復版：影片長度精確對齊與畫質格式洗白
   private async assembleSceneBasedPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
       const sceneAssets: any[] = [];
       for (const scene of script.scenes) {
@@ -170,7 +128,10 @@ export class VideoAssembler {
                   else await this.generateAiVideoMock(videoPath);
               } else { await this.generateAiVideoMock(videoPath); }
           }
-          sceneAssets.push({ video: videoPath, audio: audioPath, duration: await this.getDuration(audioPath), text: cleanNarration });
+          
+          // 確保就算配音失敗，也有最低 3 秒的長度，避免剪輯崩潰
+          const audioDur = Math.max(await this.getDuration(audioPath), 3);
+          sceneAssets.push({ video: videoPath, audio: audioPath, duration: audioDur, text: cleanNarration });
       }
 
       const assPath = this.generateSubtitles(sceneAssets, settings);
@@ -186,7 +147,14 @@ export class VideoAssembler {
           if (bgmPath) cmd.input(bgmPath);
 
           const videoOutputs: string[] = [], audioOutputs: string[] = [];
-          sceneAssets.forEach((_, i) => { filterComplex.push(`[${i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[v${i}]`); videoOutputs.push(`[v${i}]`); });
+          
+          // 🚀 核心修復區塊：利用 tpad 凍結最後一幀，並嚴格剪裁至與配音長度一模一樣！同時強制轉為 30fps 與 yuv420p
+          sceneAssets.forEach((asset, i) => { 
+              const exactDuration = asset.duration.toFixed(3);
+              filterComplex.push(`[${i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${exactDuration},setpts=PTS-STARTPTS[v${i}]`); 
+              videoOutputs.push(`[v${i}]`); 
+          });
+          
           filterComplex.push(`${videoOutputs.join('')}concat=n=${sceneAssets.length}:v=1:a=0[v_concat]`);
 
           const ttsStartIndex = sceneAssets.length;
@@ -196,25 +164,16 @@ export class VideoAssembler {
           let aFinal = '[a_tts]';
           if (bgmPath) {
               const bgmIndex = ttsStartIndex + sceneAssets.length;
-              filterComplex.push(`[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop]`);
-              filterComplex.push(`[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`);
-              filterComplex.push(`[bgm_low][a_tts]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
+              filterComplex.push(`[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][a_tts]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
 
-          // 🚀 關鍵修復：不加引號，完全交給 escapeForFfmpeg 處理路徑
           filterComplex.push(`[v_concat]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           
-          cmd.complexFilter(filterComplex)
-             .outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest'])
-             .output(outputFilename)
-             .on('end', () => resolve(outputFilename))
-             .on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`)))
-             .run();
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`))).run();
       });
   }
 
-  // 共用小工具
   private generateSubtitles(sceneAssets: any[], settings: any): string {
       const assPath = path.join(this.tempDir, 'subtitles.ass');
       let assEvents = '', currentTime = 0;
@@ -240,24 +199,15 @@ export class VideoAssembler {
       const fontConfigDir = path.join(this.tempDir, 'fontconfig'), localFontDir = path.join(this.tempDir, 'fonts_cache');
       if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
       if (!fs.existsSync(localFontDir)) fs.mkdirSync(localFontDir, { recursive: true });
-      
       let systemFontDir = path.join(process.cwd(), 'fonts');
       if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../fonts');
       if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../../fonts');
-      
       const sourceFontPath = path.join(systemFontDir, fontName), destFontPath = path.join(localFontDir, fontName);
       if (fs.existsSync(sourceFontPath)) fs.copyFileSync(sourceFontPath, destFontPath);
-      
       const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
       fs.writeFileSync(fontsConfPath, `<?xml version="1.0"?>\n<fontconfig>\n  <dir>${localFontDir.replace(/\\/g, '/')}</dir>\n  <cachedir>${fontConfigDir.replace(/\\/g, '/')}</cachedir>\n  <config></config>\n</fontconfig>`, 'utf8');
-      
-      process.env.FONTCONFIG_PATH = fontConfigDir; 
-      process.env.FONTCONFIG_FILE = fontsConfPath;
-      
-      return { 
-          fontsDirEscaped: this.escapeForFfmpeg(localFontDir), 
-          assPathEscaped: this.escapeForFfmpeg(assPath) 
-      };
+      process.env.FONTCONFIG_PATH = fontConfigDir; process.env.FONTCONFIG_FILE = fontsConfPath;
+      return { fontsDirEscaped: this.escapeForFfmpeg(localFontDir), assPathEscaped: this.escapeForFfmpeg(assPath) };
   }
 
   private async prepareBGM(mood: string): Promise<string> {
