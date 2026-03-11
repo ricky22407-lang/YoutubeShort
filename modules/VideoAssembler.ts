@@ -49,8 +49,10 @@ export class VideoAssembler {
   private async fetchDynamicBgm(mood: string): Promise<string> {
       if (!mood || mood === 'none') return '';
       const moodMap: Record<string, string> = {
-          travel: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn', product: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ',
-          vlog: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT', cinematic: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y'
+          emotional: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56', energetic: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT',
+          funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt', Relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ',
+          Happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y', Chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF',
+          Epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn'
       };
       let folderId = moodMap[mood] || moodMap['random'];
       if (mood === 'random') folderId = moodMap[Object.keys(moodMap)[Math.floor(Math.random() * Object.keys(moodMap).length)]];
