@@ -210,6 +210,15 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 <textarea value={customTopic} onChange={(e) => setCustomTopic(e.target.value)} placeholder={`輸入主題... (預設: ${channel.niche})`} className="w-full h-20 bg-black border border-zinc-700 p-3 rounded-xl text-sm text-white outline-none resize-none" />
               </div>
 
+              {/* 👇 這是你消失的秒數選單，把它貼在這裡 👇 */}
+              <div className="mb-4">
+                  <label className="text-xs font-bold text-zinc-400 uppercase block mb-2">影片目標時長</label>
+                  <select value={config.targetDuration} onChange={e => setConfig({...config, targetDuration: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded-lg text-sm text-white outline-none">
+                      <option value="30">⏱️ 30秒以內 (極短影音 / 快節奏)</option>
+                      <option value="60">⏳ 60秒以內 (標準短影音)</option>
+                  </select>
+              </div>
+
               <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
                   <label className="text-xs font-bold text-zinc-400 uppercase block mb-3">參考圖片 (Image-to-Video)</label>
                   <div className="flex items-start gap-4 mb-4">
