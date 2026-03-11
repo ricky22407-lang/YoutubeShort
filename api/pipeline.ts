@@ -98,54 +98,70 @@ export default async function handler(req: any, res: any) {
             } else if (videoEngine === 'kling') {
                 const KIE_API_KEY = process.env.KIE_API_KEY;
                 if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY" });
+                
                 const selectedKlingModel = klingModelVersion || 'kling-3.0';
-                // 🚀 修正：將參數正確包裝進 input 物件中
+                
+                // 🚀 關鍵修正 1：翻譯模型名稱 (區分圖生與文生)
+                let actualModelName = "kling-3.0/video"; // Kling 3.0 不分圖文，統一代號
+                if (selectedKlingModel === 'kling-2.6-pro') {
+                    actualModelName = referenceImage ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
+                } else if (selectedKlingModel === 'kling-2.5-turbo') {
+                    actualModelName = referenceImage ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
+                }
+
+                // 🚀 關鍵修正 2：組裝正確的 input 格式 (Kie.ai 官方要求 image_urls 為陣列)
                 const kieInput: any = {
                     prompt: visualCue,
-                    duration: 5
+                    duration: "5"
                 };
                 
-                // 如果有上傳參考圖，才加入 image_url 屬性
                 if (referenceImage) {
-                    kieInput.image_url = referenceImage;
+                    kieInput.image_urls = [referenceImage];
                 }
+
+                console.log(`[Kling] 準備呼叫模型: ${actualModelName}`);
 
                 const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
-                        model: selectedKlingModel, 
-                        input: kieInput // 👈 關鍵：Kie.ai 需要這個 input 殼
+                        model: actualModelName, 
+                        input: kieInput 
                     })
                 });
                 
-                // 🚀 抓蟲升級：印出 Kie.ai 的真實回傳內容
                 const textResponse = await submitRes.text();
                 let taskData;
                 try {
                     taskData = JSON.parse(textResponse);
                 } catch (e) {
-                    throw new Error(`Kie.ai 連線失敗，回傳了非 JSON 格式: ${textResponse}`);
+                    throw new Error(`Kie.ai 連線失敗: ${textResponse}`);
                 }
 
                 const taskId = taskData?.data?.id || taskData?.id;
                 if (!taskId) {
                     console.error("[Kie API Error]", taskData);
-                    // 將真實錯誤訊息丟到前端介面顯示
-                    throw new Error(`Kie.ai 拒絕任務，回傳錯誤: ${JSON.stringify(taskData)}`);
+                    throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
                 }
+                
+                console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢進度...`);
+                
                 let attempts = 0;
                 while (attempts < 24) { 
                     await new Promise(r => setTimeout(r, 10000)); 
                     const statusRes = await fetch(`https://api.kie.ai/api/v1/jobs/${taskId}`, { headers: { 'Authorization': `Bearer ${KIE_API_KEY}` } });
                     const statusData = await statusRes.json();
                     const status = (statusData.data?.status || statusData.status || '').toUpperCase();
+                    
                     if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'SUCCEEDED') {
-                        finalUrl = statusData.data?.video_url || statusData.data?.url || statusData.video_url; break;
-                    } else if (status === 'FAILED' || status === 'ERROR') throw new Error("Kling 雲端算圖失敗");
+                        finalUrl = statusData.data?.video_url || statusData.data?.url || statusData.video_url; 
+                        break;
+                    } else if (status === 'FAILED' || status === 'ERROR') {
+                        throw new Error(`Kling 雲端算圖失敗: ${JSON.stringify(statusData)}`);
+                    }
                     attempts++;
                 }
-                if (!finalUrl) throw new Error("Kling 算圖超時");
+                if (!finalUrl) throw new Error("Kling 算圖超時 (超過 4 分鐘)");
             } else {
                 finalUrl = 'mock'; 
             }
