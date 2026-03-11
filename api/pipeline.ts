@@ -101,29 +101,69 @@ export default async function handler(req: any, res: any) {
                 
                 const selectedKlingModel = klingModelVersion || 'kling-3.0';
                 
-                // 🚀 修正 1：使用官方最新文件定義的模型名稱
-                let actualModelName = "kling-3.0"; 
+                // 🚀 正確翻譯 Kie.ai 要求的模型名稱
+                let actualModelName = "kling-3.0/video"; 
                 if (selectedKlingModel === 'kling-2.6-pro') {
                     actualModelName = referenceImage ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
                 } else if (selectedKlingModel === 'kling-2.5-turbo') {
                     actualModelName = referenceImage ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
                 }
 
-                // 🚀 修正 2：補齊 Kie.ai 官方要求的所有必填欄位
+                // 🚀 封裝給 Kie.ai 的參數
                 const kieInput: any = {
                     prompt: visualCue,
-                    duration: "5",          // 必填時長
-                    aspect_ratio: "9:16"    // 必填：短影音畫面比例
+                    duration: "5",          
+                    aspect_ratio: "9:16"    
                 };
                 
-                // Kling 3.0 和舊版的圖片參數與必填項不同
-                if (actualModelName === "kling-3.0") {
-                    kieInput.mode = "pro";        // 3.0 必填模式
-                    kieInput.multi_shots = false; // 3.0 必填分鏡設定
-                    if (referenceImage) {
-                        kieInput.image_urls = [referenceImage]; 
-                    }
+                if (actualModelName === "kling-3.0/video") {
+                    kieInput.mode = "pro";        
+                    kieInput.multi_shots = false; 
+                    if (referenceImage) kieInput.image_urls = [referenceImage]; 
                 } else {
+                    if (referenceImage) kieInput.image_url = referenceImage; 
+                }
+
+                console.log(`[Kling] 準備呼叫模型: ${actualModelName}`);
+
+                const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        model: actualModelName, 
+                        input: kieInput 
+                    })
+                });
+                
+                const textResponse = await submitRes.text();
+                let taskData;
+                try { taskData = JSON.parse(textResponse); } catch (e) { throw new Error(`Kie.ai 連線失敗: ${textResponse}`); }
+
+                const taskId = taskData?.data?.id || taskData?.id;
+                if (!taskId) {
+                    console.error("[Kie API Error]", taskData);
+                    throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
+                }
+                
+                console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢...`);
+                
+                let attempts = 0;
+                while (attempts < 24) { 
+                    await new Promise(r => setTimeout(r, 10000)); 
+                    const statusRes = await fetch(`https://api.kie.ai/api/v1/jobs/${taskId}`, { headers: { 'Authorization': `Bearer ${KIE_API_KEY}` } });
+                    const statusData = await statusRes.json();
+                    const status = (statusData.data?.status || statusData.status || '').toUpperCase();
+                    
+                    if (status === 'COMPLETED' || status === 'SUCCESS' || status === 'SUCCEEDED') {
+                        finalUrl = statusData.data?.video_url || statusData.data?.url || statusData.video_url; 
+                        break;
+                    } else if (status === 'FAILED' || status === 'ERROR') {
+                        throw new Error(`Kling 雲端算圖失敗: ${JSON.stringify(statusData)}`);
+                    }
+                    attempts++;
+                }
+                if (!finalUrl) throw new Error("Kling 算圖超時");
+            } else {
                     if (referenceImage) {
                         kieInput.image_url = referenceImage;
                     }
