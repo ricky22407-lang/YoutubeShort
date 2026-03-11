@@ -198,12 +198,13 @@ export default async function handler(req: any, res: any) {
         const durationPrompt = targetDuration === '30' ? "\n【極重要】腳本總時長必須嚴格控制在 30 秒以內！總字數請限制在 80~100 字左右，節奏要極快。" : "\n【極重要】腳本總時長必須嚴格控制在 60 秒以內！總字數請限制在 150~180 字左右。";
         const topicToUse = (req.body.topic || channel.niche) + durationPrompt;
         
-        // 🚀 新增：把前端傳來的 productDescription 丟給 Generator
+        // 🚀 新增：將 videoType 傳給大腦
         const script = await generator.generate(
             topicToUse, 
             channel.language || 'zh-TW', 
             req.body.referenceImage, 
-            req.body.productDescription 
+            req.body.productDescription,
+            req.body.videoType || 'topic' 
         );
         return res.status(200).json({ success: true, script });
       }
