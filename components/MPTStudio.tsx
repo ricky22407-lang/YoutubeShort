@@ -5,7 +5,7 @@ interface MPTStudioProps { channel: ChannelConfig; onBack: () => void; isEmbedde
 
 export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedded = false }) => {
   const [script, setScript] = useState<ScriptData | null>(null);
-  const [treatment, setTreatment] = useState<any>(null); // 企劃書狀態
+  const [treatment, setTreatment] = useState<any>(null); 
   
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<string>("");
@@ -134,14 +134,46 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
           setLog(`🎥 啟動逐幕分散運算...`);
           for (let i = 0; i < script.scenes.length; i++) {
               const scene = script.scenes[i];
-              setLog(`⏳ 運算第 ${i+1}/${script.scenes.length} 幕畫面...`);
+              setLog(`📥 提交第 ${i+1}/${script.scenes.length} 幕算圖請求...`);
               const isFirstSceneWithProduct = !!referenceImage && scene.id === 1;
-              const sceneRes = await fetch('/api/pipeline', {
+
+              // 步驟 1: 提交任務並取得號碼牌
+              const submitRes = await fetch('/api/pipeline', {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ stage: 'generate_single_video', visualCue: scene.visual_cue, isFirstSceneWithProduct, useStockFootage: config.useStockFootage, videoEngine: config.videoEngine, klingModelVersion: config.klingModelVersion, referenceImage: referenceImage || script.referenceImage })
+                  body: JSON.stringify({ stage: 'generate_video_submit', visualCue: scene.visual_cue, isFirstSceneWithProduct, useStockFootage: config.useStockFootage, videoEngine: config.videoEngine, klingModelVersion: config.klingModelVersion, referenceImage: referenceImage || script.referenceImage })
               }).then(r => r.json());
-              if (sceneRes.success) { preGeneratedSceneUrls[scene.id] = sceneRes.videoUrl; } else { throw new Error(`場景 ${scene.id} 生成失敗: ${sceneRes.error}`); }
-              if (i < script.scenes.length - 1 && config.videoEngine === 'veo') await new Promise(resolve => setTimeout(resolve, 30000));
+
+              if (!submitRes.success) throw new Error(`場景 ${scene.id} 提交失敗: ${submitRes.error}`);
+
+              if (submitRes.isStock) {
+                  setLog(`✅ 第 ${i+1} 幕成功使用圖庫素材！`);
+                  preGeneratedSceneUrls[scene.id] = submitRes.videoUrl;
+              } else {
+                  // 步驟 2: 進入前端安全輪詢迴圈 (每15秒問一次，Vercel 絕對不會超時)
+                  setLog(`⏳ 第 ${i+1} 幕雲端算圖中，請耐心等待 (約需 3~8 分鐘)...`);
+                  
+                  let attempts = 0;
+                  while (true) {
+                      await new Promise(resolve => setTimeout(resolve, 15000)); // 等待 15 秒再問
+                      
+                      const statusRes = await fetch('/api/pipeline', {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ stage: 'generate_video_status', videoEngine: config.videoEngine, taskId: submitRes.taskId, operation: submitRes.operation })
+                      }).then(r => r.json());
+
+                      if (statusRes.status === 'completed') {
+                          setLog(`✅ 第 ${i+1} 幕算圖完成！`);
+                          preGeneratedSceneUrls[scene.id] = statusRes.videoUrl;
+                          break; // 跳出迴圈，繼續下一幕
+                      } else if (statusRes.status === 'failed' || statusRes.status === 'error') {
+                          throw new Error(`場景 ${scene.id} 生成失敗: ${statusRes.error}`);
+                      }
+
+                      attempts++;
+                      if (attempts % 4 === 0) setLog(`⏳ 第 ${i+1} 幕持續算圖中... (已等待 ${attempts * 15} 秒)`);
+                      if (attempts > 60) throw new Error(`場景 ${scene.id} 算圖超時 (超過 15 分鐘)`);
+                  }
+              }
           }
       }
 
@@ -210,7 +242,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 <textarea value={customTopic} onChange={(e) => setCustomTopic(e.target.value)} placeholder={`輸入主題... (預設: ${channel.niche})`} className="w-full h-20 bg-black border border-zinc-700 p-3 rounded-xl text-sm text-white outline-none resize-none" />
               </div>
 
-              {/* 👇 這是你消失的秒數選單，把它貼在這裡 👇 */}
               <div className="mb-4">
                   <label className="text-xs font-bold text-zinc-400 uppercase block mb-2">影片目標時長</label>
                   <select value={config.targetDuration} onChange={e => setConfig({...config, targetDuration: e.target.value})} className="w-full bg-black border border-zinc-700 p-2 rounded-lg text-sm text-white outline-none">
@@ -239,7 +270,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               </button>
             </div>
 
-            {/* 🚀 完整還原：系統配置 (包含 BGM、字幕等) */}
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 space-y-4">
               <h2 className="text-xl font-semibold">2. 系統配置</h2>
               
@@ -405,7 +435,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
             )}
           </div>
 
-          {/* 🚀 完整還原：右側預覽與社群發布 */}
+          {/* 右側：預覽與發布 */}
           <div className="lg:col-span-4 space-y-6">
             <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800 min-h-[400px] flex flex-col items-center justify-center relative">
               {videoUrl ? (
