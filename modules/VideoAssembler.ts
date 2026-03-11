@@ -195,7 +195,7 @@ export class VideoAssembler {
           const durationMs = Math.round(asset.duration * 100), words = asset.text.split(''); 
           const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
           let karaokeText = '';
-          words.forEach(w => { karaokeText += `{\\k${charDuration}}${w}`; });
+          words.forEach((w: string) => { karaokeText += `{\\k${charDuration}}${w}`; });
           assEvents += `Dialogue: 0,${formatAssTime(currentTime)},${formatAssTime(currentTime + asset.duration)},Default,,0,0,0,,${karaokeText}\n`;
           currentTime += asset.duration;
       }
