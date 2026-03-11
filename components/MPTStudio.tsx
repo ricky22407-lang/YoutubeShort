@@ -149,29 +149,32 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   setLog(`✅ 第 ${i+1} 幕成功使用圖庫素材！`);
                   preGeneratedSceneUrls[scene.id] = submitRes.videoUrl;
               } else {
-                  // 步驟 2: 進入前端安全輪詢迴圈 (每15秒問一次，Vercel 絕對不會超時)
-                  setLog(`⏳ 第 ${i+1} 幕雲端算圖中，請耐心等待 (約需 3~8 分鐘)...`);
+                  // 🚀 依照指令：收到任務 ID 後，什麼都不做直接盲等 4 分鐘 (240秒)
+                  setLog(`⏳ 第 ${i+1} 幕任務已送出！系統將嚴格等待 4 分鐘後才開始查詢...`);
+                  await new Promise(resolve => setTimeout(resolve, 240000));
                   
                   let attempts = 0;
                   while (true) {
-                      await new Promise(resolve => setTimeout(resolve, 15000)); // 等待 15 秒再問
-                      
                       const statusRes = await fetch('/api/pipeline', {
                           method: 'POST', headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ stage: 'generate_video_status', videoEngine: config.videoEngine, taskId: submitRes.taskId, operation: submitRes.operation })
                       }).then(r => r.json());
 
                       if (statusRes.status === 'completed') {
-                          setLog(`✅ 第 ${i+1} 幕算圖完成！`);
+                          setLog(`✅ 第 ${i+1} 幕算圖完成並成功取得影片！`);
                           preGeneratedSceneUrls[scene.id] = statusRes.videoUrl;
-                          break; // 跳出迴圈，繼續下一幕
+                          break; 
                       } else if (statusRes.status === 'failed' || statusRes.status === 'error') {
                           throw new Error(`場景 ${scene.id} 生成失敗: ${statusRes.error}`);
                       }
 
                       attempts++;
-                      if (attempts % 4 === 0) setLog(`⏳ 第 ${i+1} 幕持續算圖中... (已等待 ${attempts * 15} 秒)`);
-                      if (attempts > 60) throw new Error(`場景 ${scene.id} 算圖超時 (超過 15 分鐘)`);
+                      setLog(`⏳ 第 ${i+1} 幕持續算圖中... (四分鐘後已輪詢 ${attempts} 次)`);
+                      
+                      if (attempts > 30) throw new Error(`場景 ${scene.id} 算圖完全超時 (已等待超過 14 分鐘)`);
+                      
+                      // 🚀 依照指令：每 20 秒詢問一次
+                      await new Promise(resolve => setTimeout(resolve, 20000)); 
                   }
               }
           }
