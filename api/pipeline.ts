@@ -129,8 +129,18 @@ export default async function handler(req: any, res: any) {
                 }
 
                 // 封裝給 Kie 的參數
-                const kieInput: any = { prompt: visualCue };
+                const kieInput: any = { 
+                    prompt: visualCue,
+                    duration: "5" // 👈 加回這個被不小心刪掉的必填秒數！
+                };
                 
+                // 針對 Kling 3.0 的嚴格防呆
+                if (actualModelName === "kling-3.0") {
+                    kieInput.mode = "pro";
+                    kieInput.multi_shots = false;
+                }
+                
+                // 針對圖片與畫幅的防呆
                 if (imageUrlToUse) {
                     kieInput.image_url = imageUrlToUse;
                     kieInput.image_urls = [imageUrlToUse]; 
