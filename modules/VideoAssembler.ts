@@ -13,18 +13,14 @@ ffmpeg.setFfprobePath(ffprobePath.path);
 export class VideoAssembler {
   private tempDir: string;
   private ttsService: TTSService;
-  private pexelsApiKey: string;
 
   constructor(apiKey: string, pexelsApiKey: string) {
     this.tempDir = path.join(os.tmpdir(), `yt_shorts_${Date.now()}`);
     if (!fs.existsSync(this.tempDir)) fs.mkdirSync(this.tempDir, { recursive: true });
     this.ttsService = new TTSService();
-    this.pexelsApiKey = pexelsApiKey;
   }
 
-  private escapeForFfmpeg(str: string) {
-      return str.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/,/g, '\\,').replace(/'/g, "\\'").replace(/ /g, '\\ ');
-  }
+  private escapeForFfmpeg(str: string) { return str.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/,/g, '\\,').replace(/'/g, "\\'").replace(/ /g, '\\ '); }
 
   private async getDuration(filePath: string): Promise<number> {
     return new Promise((resolve) => {
@@ -36,17 +32,14 @@ export class VideoAssembler {
     });
   }
 
-  // 🚀 防呆機制：改用 ArrayBuffer 確保檔案 100% 完整下載，防範串流中斷
   private async downloadFile(url: string, dest: string, timeoutMs: number = 60000): Promise<void> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
-        const buffer = Buffer.from(await res.arrayBuffer());
-        fs.writeFileSync(dest, buffer);
-    } catch (e: any) { throw e; } 
-    finally { clearTimeout(timeoutId); }
+        fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+    } catch (e: any) { throw e; } finally { clearTimeout(timeoutId); }
   }
 
   private async fetchDynamicBgm(mood: string): Promise<string> {
@@ -69,7 +62,6 @@ export class VideoAssembler {
   }
 
   async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
-      console.log(`[VideoAssembler] 啟動 [${videoType.toUpperCase()}] 專屬渲染管線...`);
       const commonSettings = { bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf', voiceId: config?.ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId ? config.elevenLabsVoiceId : (config?.voiceId || 'zh-TW-HsiaoChenNeural'), bgmMood: config?.bgmMood || 'none' };
       if (videoType === 'avatar') return this.assembleAvatarPipeline(script, outputFilename, commonSettings, preGeneratedHeygenUrl);
       else return this.assembleSceneBasedPipeline(script, outputFilename, commonSettings, preGeneratedSceneUrls);
@@ -86,8 +78,7 @@ export class VideoAssembler {
       const totalChars = script.scenes.map(s => s.narration.replace(/[\n\r\s]+/g, '')).join('').length;
       for (const scene of script.scenes) {
           const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
-          const sceneChars = cleanNarration.replace(/\s+/g, '').length;
-          sceneAssets.push({ video: singleVideoPath, duration: totalDuration * (sceneChars / Math.max(totalChars, 1)), text: cleanNarration });
+          sceneAssets.push({ video: singleVideoPath, duration: totalDuration * (cleanNarration.replace(/\s+/g, '').length / Math.max(totalChars, 1)), text: cleanNarration });
       }
 
       const assPath = this.generateSubtitles(sceneAssets, settings);
@@ -104,34 +95,36 @@ export class VideoAssembler {
               filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          
           filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
-          
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg 失敗: ${err.message}`))).run();
       });
   }
 
-  // 🚀 防黑畫面終極修復版：影片長度精確對齊與畫質格式洗白
   private async assembleSceneBasedPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
       const sceneAssets: any[] = [];
       for (const scene of script.scenes) {
-          const sceneId = scene.id;
-          const audioPath = path.join(this.tempDir, `scene_${sceneId}.mp3`);
-          let videoPath = path.join(this.tempDir, `scene_${sceneId}.mp4`);
+          const audioPath = path.join(this.tempDir, `scene_${scene.id}.mp3`);
+          let videoPath = path.join(this.tempDir, `scene_${scene.id}.mp4`);
           const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
-          if (!fs.existsSync(audioPath)) await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
+          // 🚀 支援「無配音」場景：如果有字就配音，沒字就生 3 秒靜音檔避免崩潰
+          let audioDur = 0;
+          if (cleanNarration.length > 0) {
+              if (!fs.existsSync(audioPath)) await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
+              audioDur = await this.getDuration(audioPath);
+          } else {
+              if (!fs.existsSync(audioPath)) {
+                  await new Promise<void>((resolve, reject) => { ffmpeg().input('anullsrc').inputFormat('lavfi').outputOptions(['-t 3']).audioCodec('libmp3lame').output(audioPath).on('end', resolve).on('error', reject).run(); });
+              }
+              audioDur = 3;
+          }
+
           if (!fs.existsSync(videoPath)) {
-              if (preGeneratedSceneUrls && preGeneratedSceneUrls[sceneId]) {
-                  const url = preGeneratedSceneUrls[sceneId];
-                  if (url !== 'mock') await this.downloadFile(url, videoPath);
-                  else await this.generateAiVideoMock(videoPath);
+              if (preGeneratedSceneUrls && preGeneratedSceneUrls[scene.id] && preGeneratedSceneUrls[scene.id] !== 'mock') {
+                  await this.downloadFile(preGeneratedSceneUrls[scene.id], videoPath);
               } else { await this.generateAiVideoMock(videoPath); }
           }
-          
-          // 確保就算配音失敗，也有最低 3 秒的長度，避免剪輯崩潰
-          const audioDur = Math.max(await this.getDuration(audioPath), 3);
-          sceneAssets.push({ video: videoPath, audio: audioPath, duration: audioDur, text: cleanNarration });
+          sceneAssets.push({ video: videoPath, audio: audioPath, duration: Math.max(audioDur, 2.5), text: cleanNarration });
       }
 
       const assPath = this.generateSubtitles(sceneAssets, settings);
@@ -147,14 +140,10 @@ export class VideoAssembler {
           if (bgmPath) cmd.input(bgmPath);
 
           const videoOutputs: string[] = [], audioOutputs: string[] = [];
-          
-          // 🚀 核心修復區塊：利用 tpad 凍結最後一幀，並嚴格剪裁至與配音長度一模一樣！同時強制轉為 30fps 與 yuv420p
           sceneAssets.forEach((asset, i) => { 
-              const exactDuration = asset.duration.toFixed(3);
-              filterComplex.push(`[${i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${exactDuration},setpts=PTS-STARTPTS[v${i}]`); 
+              filterComplex.push(`[${i}:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${asset.duration.toFixed(3)},setpts=PTS-STARTPTS[v${i}]`); 
               videoOutputs.push(`[v${i}]`); 
           });
-          
           filterComplex.push(`${videoOutputs.join('')}concat=n=${sceneAssets.length}:v=1:a=0[v_concat]`);
 
           const ttsStartIndex = sceneAssets.length;
@@ -169,7 +158,6 @@ export class VideoAssembler {
           }
 
           filterComplex.push(`[v_concat]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
-          
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`))).run();
       });
   }
@@ -182,15 +170,18 @@ export class VideoAssembler {
 
       for (const asset of sceneAssets) {
           const durationMs = Math.round(asset.duration * 100), words = asset.text.split(''); 
-          const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
           let karaokeText = '';
-          words.forEach((w: string) => { karaokeText += `{\\k${charDuration}}${w}`; });
+          if (words.length > 0) {
+              const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
+              words.forEach((w: string) => { karaokeText += `{\\k${charDuration}}${w}`; });
+          }
           assEvents += `Dialogue: 0,${formatAssTime(currentTime)},${formatAssTime(currentTime + asset.duration)},Default,,0,0,0,,${karaokeText}\n`;
           currentTime += asset.duration;
       }
       const fontMap: Record<string, string> = { 'NotoSansTC-Bold.ttf': 'Noto Sans TC', 'NotoSerifTC-Bold.ttf': 'Noto Serif TC', 'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe', 'Roboto-Bold.ttf': 'Roboto', 'Anton-Regular.ttf': 'Anton', 'Bangers-Regular.ttf': 'Bangers' };
-      const selectedFontFamily = fontMap[settings.fontName] || 'Noto Sans TC';
-      const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${selectedFontFamily},${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,350,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+      
+      // 🚀 字幕解析度大修正：對齊影片實際的 720x1280，並將 MarginV 設為 150，確保不會飛到螢幕外！
+      const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${fontMap[settings.fontName] || 'Noto Sans TC'},${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
       fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
       return assPath;
   }
