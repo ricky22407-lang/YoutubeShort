@@ -101,26 +101,35 @@ export default async function handler(req: any, res: any) {
                 
                 const selectedKlingModel = klingModelVersion || 'kling-3.0';
                 
-                // 🚀 關鍵修正 1：翻譯模型名稱 (區分圖生與文生)
-                let actualModelName = "kling-3.0/video"; // Kling 3.0 不分圖文，統一代號
+                // 🚀 修正 1：使用官方最新文件定義的模型名稱
+                let actualModelName = "kling-3.0"; 
                 if (selectedKlingModel === 'kling-2.6-pro') {
                     actualModelName = referenceImage ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
                 } else if (selectedKlingModel === 'kling-2.5-turbo') {
                     actualModelName = referenceImage ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
                 }
 
-                // 🚀 關鍵修正 2：恢復使用單數字串 image_url，並確保 duration 為數字
+                // 🚀 修正 2：補齊 Kie.ai 官方要求的所有必填欄位
                 const kieInput: any = {
-                    prompt: visualCue
+                    prompt: visualCue,
+                    duration: "5",          // 必填時長
+                    aspect_ratio: "9:16"    // 必填：短影音畫面比例
                 };
                 
-                if (referenceImage) {
-                    // Kie.ai 圖生影片必填欄位
-                    kieInput.image_url = referenceImage;
-                    kieInput.image = referenceImage; // 雙重防呆
+                // Kling 3.0 和舊版的圖片參數與必填項不同
+                if (actualModelName === "kling-3.0") {
+                    kieInput.mode = "pro";        // 3.0 必填模式
+                    kieInput.multi_shots = false; // 3.0 必填分鏡設定
+                    if (referenceImage) {
+                        kieInput.image_urls = [referenceImage]; 
+                    }
+                } else {
+                    if (referenceImage) {
+                        kieInput.image_url = referenceImage;
+                    }
                 }
 
-                console.log(`[Kling] 準備呼叫模型: ${actualModelName}`);
+                console.log(`[Kling] 準備呼叫模型: ${actualModelName}, 參數 keys:`, Object.keys(kieInput));
 
                 const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                     method: 'POST',
@@ -145,7 +154,7 @@ export default async function handler(req: any, res: any) {
                     throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
                 }
                 
-                console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢進度...`);
+                console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢...`);
                 
                 let attempts = 0;
                 while (attempts < 24) { 
@@ -162,7 +171,7 @@ export default async function handler(req: any, res: any) {
                     }
                     attempts++;
                 }
-                if (!finalUrl) throw new Error("Kling 算圖超時 (超過 4 分鐘)");
+                if (!finalUrl) throw new Error("Kling 算圖超時");
             } else {
                 finalUrl = 'mock'; 
             }
