@@ -96,24 +96,23 @@ export default async function handler(req: any, res: any) {
                 if (!operation.done || !operation.response?.generatedVideos?.[0]?.video?.uri) return res.status(500).json({ success: false, error: "Veo 生成超時" });
                 finalUrl = `${operation.response.generatedVideos[0].video.uri}&key=${API_KEY}`;
             } 
-            } else if (videoEngine === 'kling') {
+            else if (videoEngine === 'kling') {
                 const KIE_API_KEY = process.env.KIE_API_KEY;
                 if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY" });
                 
-                // 🚀 終極殺招：將 Base64 圖片上傳到 Vercel Blob 變成真實 HTTPS 網址！
+                // 🚀 圖片轉真實 HTTPS 網址處理 (解決 Kling 所有報錯的終極手段)
                 let imageUrlToUse = referenceImage;
                 if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) {
-                    console.log(`[API] 發現 Base64 圖片，正在上傳至 Vercel Blob 轉為公開網址...`);
+                    console.log(`[API] 發現 Base64 圖片，正在上傳至 Vercel Blob...`);
                     try {
                         const base64Data = referenceImage.split(',')[1];
                         const buffer = Buffer.from(base64Data, 'base64');
                         const mimeType = referenceImage.split(';')[0].split(':')[1];
                         const ext = mimeType.split('/')[1] || 'png';
                         
-                        // 使用 Vercel Blob 取得真實網址
                         const blob = await put(`refs/ref_${Date.now()}.${ext}`, buffer, { access: 'public' });
                         imageUrlToUse = blob.url;
-                        console.log(`[API] 圖片已成功轉為公開網址: ${imageUrlToUse}`);
+                        console.log(`[API] 圖片已成功轉為網址: ${imageUrlToUse}`);
                     } catch (uploadError: any) {
                         throw new Error(`無法將圖片轉為公開網址: ${uploadError.message}`);
                     }
@@ -121,7 +120,7 @@ export default async function handler(req: any, res: any) {
 
                 const selectedKlingModel = klingModelVersion || 'kling-3.0';
                 
-                // 翻譯成 Kie.ai 要求的正式模型代號
+                // 翻譯模型名稱
                 let actualModelName = "kling-3.0"; 
                 if (selectedKlingModel === 'kling-2.6-pro') {
                     actualModelName = imageUrlToUse ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
@@ -129,19 +128,17 @@ export default async function handler(req: any, res: any) {
                     actualModelName = imageUrlToUse ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
                 }
 
-                // 最精簡、最不容易報錯的參數組合
-                const kieInput: any = {
-                    prompt: visualCue
-                };
+                // 封裝給 Kie 的參數
+                const kieInput: any = { prompt: visualCue };
                 
                 if (imageUrlToUse) {
-                    kieInput.image_url = imageUrlToUse;     // 大多數模型的標準寫法
-                    kieInput.image_urls = [imageUrlToUse];  // Kling 3.0 的雙重防呆
+                    kieInput.image_url = imageUrlToUse;
+                    kieInput.image_urls = [imageUrlToUse]; 
                 } else {
-                    kieInput.aspect_ratio = "9:16";         // 若無圖片則強制指定直式比例
+                    kieInput.aspect_ratio = "9:16";
                 }
 
-                console.log(`[Kling] 準備呼叫模型: ${actualModelName}, 參數 keys:`, Object.keys(kieInput));
+                console.log(`[Kling] 準備呼叫模型: ${actualModelName}`);
 
                 const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                     method: 'POST',
@@ -155,8 +152,6 @@ export default async function handler(req: any, res: any) {
 
                 const taskId = taskData?.data?.id || taskData?.id;
                 if (!taskId) throw new Error(`Kie.ai 拒絕任務: ${JSON.stringify(taskData)}`);
-                
-                console.log(`[Kling] 任務建立成功，ID: ${taskId}，開始輪詢...`);
                 
                 let attempts = 0;
                 while (attempts < 24) { 
@@ -187,7 +182,6 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, topics: JSON.parse(cleanJson(response.text || '[]')) });
       }
 
-      // 🚀 找回你剛才不小心刪除的企劃書大腦
       case 'generate_treatment': {
         const generator = new ScriptGenerator(API_KEY);
         const topicToUse = req.body.topic || channel.niche;
@@ -222,5 +216,7 @@ export default async function handler(req: any, res: any) {
 
       default: return res.status(400).json({ success: false, error: 'Invalid Stage' });
     }
-  } catch (e: any) { return res.status(200).json({ success: false, error: `Server Error: ${e.message}` }); }
+  } catch (e: any) { 
+    return res.status(200).json({ success: false, error: `Server Error: ${e.message}` }); 
+  }
 }
