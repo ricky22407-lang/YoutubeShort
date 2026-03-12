@@ -6,9 +6,6 @@ interface MPTStudioProps { channel: ChannelConfig; onBack: () => void; isEmbedde
 export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedded = false }) => {
   const [script, setScript] = useState<ScriptData | null>(null);
   const [treatment, setTreatment] = useState<any>(null); 
-  
-  // 🚀 核心升級：智慧快取記憶體 (Smart Cache)
-  // 用來記住已經成功生成影片的場景，避免重複發 API 扣錢！
   const [sceneVideoCache, setSceneVideoCache] = useState<Record<number, string>>({});
   
   const [loading, setLoading] = useState(false);
@@ -42,13 +39,36 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [aiSuggestions, setAiSuggestions] = useState<string[]>([]);
   const [isSuggesting, setIsSuggesting] = useState(false);
 
+  // 🚀 核心新功能：發送環境健康檢查請求
+  const testSettings = async () => {
+      setLoading(true);
+      setLog("🔍 正在發送檢測請求，請稍候...");
+      try {
+          const res = await fetch('/api/pipeline', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ stage: 'test_config', mptConfig: config })
+          });
+          const data = await res.json();
+          if (data.success) {
+              // 將多行結果合併為單一字串顯示在系統日誌中
+              setLog(data.logs.join('\n'));
+          } else {
+              setLog("❌ 檢測模組發生錯誤: " + data.error);
+          }
+      } catch (e: any) {
+          setLog("❌ 檢測連線失敗: " + e.message);
+      } finally {
+          setLoading(false);
+      }
+  };
+
   const handleVideoTypeChange = (type: 'avatar' | 'product' | 'topic') => {
       setVideoType(type);
       if (type === 'avatar') setConfig({...config, videoEngine: 'heygen', useStockFootage: false});
       if (type === 'product') setConfig({...config, videoEngine: 'kling', useStockFootage: false});
       if (type === 'topic') setConfig({...config, videoEngine: 'veo', useStockFootage: true});
       setScript(null); setTreatment(null);
-      setSceneVideoCache({}); // 🚀 清除快取
+      setSceneVideoCache({}); 
   };
 
   const fetchAiSuggestions = async () => {
@@ -73,7 +93,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
     setLoading(true); setLog(`🧠 正在呼叫 Agent 導演規劃企劃大綱...`);
-    setSceneVideoCache({}); // 🚀 重新構思時清除快取
+    setSceneVideoCache({});
     try {
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -86,7 +106,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
   const generateFinalScript = async () => {
     setLoading(true); setLog(`🎬 導演已確認企劃，正在撰寫分鏡腳本...`);
-    setSceneVideoCache({}); // 🚀 產生新腳本時強制清除舊影片快取，避免對應錯誤
+    setSceneVideoCache({}); 
     try {
       const finalTopic = customTopic || channel.niche;
       const res = await fetch('/api/pipeline', {
@@ -101,8 +121,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
     if (!script) return;
     setScript({ ...script, scenes: script.scenes.map(scene => scene.id === id ? { ...scene, [field]: value } : scene) });
-    
-    // 如果修改了畫面提示詞，把那幕的快取洗掉，讓它重算
     if (field === 'visual_cue') {
         const newCache = { ...sceneVideoCache };
         delete newCache[id];
@@ -159,7 +177,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               const scene = script.scenes[i];
               let rawUrl = '';
 
-              // 步驟 1：向 Kling 拿原始影片 (或從快取拿)
               if (sceneVideoCache[scene.id]) {
                   setLog(`♻️ 第 ${i+1} 幕原始影片已在快取中，跳過 Kling 算圖！`);
                   rawUrl = sceneVideoCache[scene.id];
@@ -203,7 +220,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   }
               }
 
-              // 步驟 2：原始影片拿到後，立刻呼叫伺服器「只針對這一幕」進行剪輯與壓字 (只需 5 秒)
               setLog(`🎬 第 ${i+1} 幕取得影片，正在雲端壓製專屬配音與字幕...`);
               const chunkRes = await fetch('/api/pipeline', {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -214,7 +230,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               bakedChunks.push(chunkRes.chunkUrl);
           }
 
-          // 步驟 3：所有分鏡都壓製完畢，啟動光速無損合併！
           setLog('🚀 啟動極限光速合併 (無損拼接，不需重新編碼)...');
           const stitchRes = await fetch('/api/pipeline', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -434,7 +449,11 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                   <option value="none">🔇 無配樂 (No BGM)</option>
                 </select>
               </div>
-
+              
+              {/* 🚀 健檢按鈕 UI */}
+              <button onClick={testSettings} disabled={loading} className="w-full mt-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-blue-400 border border-blue-900/50 rounded-xl font-bold transition flex items-center justify-center gap-2">
+                  🛠️ 執行環境與 API 檢測
+              </button>
             </div>
           </div>
 
@@ -528,9 +547,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 )}
             </div>
 
-            <div className="bg-black font-mono text-xs text-zinc-400 p-4 rounded-xl border border-zinc-800 h-32 overflow-y-auto">
+            {/* 🚀 加大日誌區塊並支援換行顯示 */}
+            <div className="bg-black font-mono text-xs text-zinc-400 p-4 rounded-xl border border-zinc-800 h-48 overflow-y-auto">
               <div className="text-zinc-500 mb-2">系統日誌:</div>
-              {log && <div className="text-emerald-400">&gt; {log}</div>}
+              {log && <div className="text-emerald-400 whitespace-pre-wrap">&gt; {log}</div>}
             </div>
           </div>
         </div>
