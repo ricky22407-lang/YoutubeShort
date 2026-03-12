@@ -49,7 +49,6 @@ export class VideoAssembler {
     }
   }
 
-  // 🚀 核心修復 2：使用官方 alt=media 通道正確下載 BGM，並加入高音質備用線路
   private async fetchDynamicBgm(mood: string): Promise<string> {
       if (!mood || mood === 'none') return '';
       const moodMap: Record<string, string> = { emotional: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56', energetic: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT', funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt', Relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ', Happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y', Chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF', Epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn' };
@@ -63,14 +62,11 @@ export class VideoAssembler {
                   const files = data.files || [];
                   if (files.length > 0) {
                       const fileId = files[Math.floor(Math.random() * files.length)].id;
-                      // 這是正確繞過掃毒警告，直接取得 mp3 檔案的 API 寫法
                       return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`;
                   }
               }
           }
       } catch (error) { console.warn("[BGM] Google Drive 抓取失敗"); } 
-      
-      // 確保影片絕對不會沒有音樂 (高品質無版權音樂)
       return 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3';
   }
 
@@ -87,7 +83,6 @@ export class VideoAssembler {
       const audioPath = path.join(this.tempDir, `raw_a_${scene.id}.mp3`);
       const videoPath = path.join(this.tempDir, `raw_v_${scene.id}.mp4`);
       const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
-
       const ttsEngine = config?.ttsEngine || 'edge';
       const voiceId = config?.voiceId || 'zh-TW-HsiaoChenNeural';
 
@@ -112,8 +107,6 @@ export class VideoAssembler {
       const subSettings = { fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
       
       const assPath = this.generateSubtitles(sceneAssets, subSettings);
-
-      // 記得加上 await，因為 setupFonts 現在會動態下載字體
       const { fontsDirEscaped, assPathEscaped } = await this.setupFonts(assPath, subSettings.fontName);
 
       return new Promise((resolve, reject) => {
@@ -121,7 +114,6 @@ export class VideoAssembler {
               .input(videoPath)
               .input(audioPath)
               .complexFilter([
-                  // 🚀 核心修復 3：強制畫面填滿 720x1280 (裁切多餘邊角，維持 9:16 完美直立比例，無黑邊！)
                   `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
                   `[v]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
               ])
@@ -137,42 +129,89 @@ export class VideoAssembler {
       });
   }
 
+  // 🚀 核心升級 3：電影級轉場引擎 (Xfade & Acrossfade)
   async stitchFinal(chunkUrls: string[], config: any, outputPath: string): Promise<string> {
-      const concatListPath = path.join(this.tempDir, 'concat.txt');
-      let concatFileContent = '';
+      console.log(`[StitchFinal] 準備縫合 ${chunkUrls.length} 個片段，使用轉場引擎...`);
+      const localPaths: string[] = [];
+      const durations: number[] = [];
 
+      // 下載所有片段並取得精準時長
       await Promise.all(chunkUrls.map(async (url, i) => {
           const p = path.join(this.tempDir, `chunk_${i}.mp4`);
           await this.downloadFile(url, p);
+          localPaths[i] = p;
       }));
 
-      for (let i = 0; i < chunkUrls.length; i++) {
-          const p = path.join(this.tempDir, `chunk_${i}.mp4`);
-          concatFileContent += `file '${p.replace(/\\/g, '/')}'\n`;
+      for (let i = 0; i < localPaths.length; i++) {
+          durations[i] = await this.getDuration(localPaths[i]);
       }
-      fs.writeFileSync(concatListPath, concatFileContent);
 
       const bgmMood = config?.bgmMood || 'none';
       const bgmVolume = config?.bgmVolume ?? 0.1;
       const bgmPath = await this.prepareBGM(bgmMood);
 
       return new Promise((resolve, reject) => {
-          const cmd = ffmpeg().input(concatListPath).inputOptions(['-f concat', '-safe 0']);
-          if (bgmPath) {
-              cmd.input(bgmPath)
-                 .complexFilter([
-                     `[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`,
-                     `[bgm_loop]volume=${bgmVolume}[bgm_low]`,
-                     `[0:a][bgm_low]amix=inputs=2:duration=shortest:dropout_transition=2[a_out]`
-                 ])
-                 .outputOptions(['-map 0:v', '-map [a_out]', '-c:v copy', '-c:a aac', '-ar 44100', '-ac 2']);
-          } else {
-              cmd.outputOptions(['-c copy']);
+          const cmd = ffmpeg();
+          localPaths.forEach(p => cmd.input(p));
+          if (bgmPath) cmd.input(bgmPath);
+
+          // 如果只有一支影片，直接複製或加 BGM 即可，不需轉場
+          if (localPaths.length === 1) {
+              if (bgmPath) {
+                  cmd.complexFilter([
+                      `[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`,
+                      `[bgm_loop]volume=${bgmVolume}[bgm_low]`,
+                      `[0:a][bgm_low]amix=inputs=2:duration=shortest:dropout_transition=2[a_out]`
+                  ]).outputOptions(['-map 0:v', '-map [a_out]', '-c:v copy', '-c:a aac', '-ar 44100', '-ac 2']);
+              } else {
+                  cmd.outputOptions(['-c copy']);
+              }
+              cmd.output(outputPath).on('end', () => resolve(outputPath)).on('error', (err) => reject(err)).run();
+              return;
           }
-          cmd.output(outputPath).on('end', () => resolve(outputPath)).on('error', (err) => reject(new Error(`Stitch FFmpeg: ${err.message}`))).run();
+
+          // 🌟 產生 xfade 與 acrossfade 濾鏡鏈
+          const transitionDuration = 0.5;
+          let filterComplex = '';
+          let currentOffset = 0;
+          let lastV = '0:v';
+          let lastA = '0:a';
+
+          for (let i = 1; i < localPaths.length; i++) {
+              currentOffset += (durations[i - 1] - transitionDuration);
+              const nextV = `v_step${i}`;
+              const nextA = `a_step${i}`;
+              filterComplex += `[${lastV}][${i}:v]xfade=transition=fade:duration=${transitionDuration}:offset=${currentOffset.toFixed(3)}[${nextV}];`;
+              filterComplex += `[${lastA}][${i}:a]acrossfade=d=${transitionDuration}[${nextA}];`;
+              lastV = nextV;
+              lastA = nextA;
+          }
+
+          // BGM 混音處理
+          let finalAudio = `[${lastA}]`;
+          if (bgmPath) {
+              const bgmIndex = localPaths.length; // BGM 會是最後一個 input
+              filterComplex += `[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop];`;
+              filterComplex += `[bgm_loop]volume=${bgmVolume}[bgm_low];`;
+              filterComplex += `[${lastA}][bgm_low]amix=inputs=2:duration=shortest:dropout_transition=2[a_out]`;
+              finalAudio = '[a_out]';
+          }
+
+          // 因為用了轉場濾鏡，影片必須重新壓製，我們使用 ultrafast 保證極速過關
+          cmd.complexFilter(filterComplex)
+             .outputOptions([
+                 `-map [${lastV}]`, `-map ${finalAudio}`,
+                 '-c:v libx264', '-preset ultrafast', '-crf 28', '-pix_fmt yuv420p',
+                 '-c:a aac', '-ar 44100', '-ac 2'
+             ])
+             .output(outputPath)
+             .on('end', () => resolve(outputPath))
+             .on('error', (err) => reject(new Error(`Stitch FFmpeg: ${err.message}`)))
+             .run();
       });
   }
 
+  // (Avatar Pipeline 維持原樣)
   private async assembleAvatarPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedHeygenUrl?: string): Promise<string> {
       if (!preGeneratedHeygenUrl) throw new Error("未收到預先生成的 HeyGen 影片網址！");
       const singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
@@ -220,13 +259,11 @@ export class VideoAssembler {
           currentTime += asset.duration;
       }
       
-      // 強制將字幕映射到我們動態下載的 "Noto Sans CJK TC" 字體上
       const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
       fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
       return assPath;
   }
 
-  // 🚀 核心修復 1：無懼 Vercel 環境，動態為 FFmpeg 注入中文字體
   private async setupFonts(assPath: string, fontName: string) {
       const fontConfigDir = path.join(this.tempDir, 'fontconfig');
       const localFontDir = path.join(this.tempDir, 'fonts_cache');
@@ -235,14 +272,11 @@ export class VideoAssembler {
 
       const destFontPath = path.join(localFontDir, 'NotoSansCJKtc-Bold.otf');
 
-      // Vercel 部署時通常不包含字體，我們強制從 CDN 即時下載一次
       if (!fs.existsSync(destFontPath)) {
-          console.log(`[VideoAssembler] 正在下載中文字體 (解決 Vercel 字幕不顯示問題)...`);
+          console.log(`[VideoAssembler] 正在下載中文字體...`);
           try {
               await this.downloadFile('https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf', destFontPath, 30000, 3);
-          } catch (e) {
-              console.error("字體下載失敗:", e);
-          }
+          } catch (e) { console.error("字體下載失敗:", e); }
       }
 
       const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
