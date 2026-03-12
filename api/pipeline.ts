@@ -101,27 +101,13 @@ export default async function handler(req: any, res: any) {
             }
 
             const selectedKlingModel = klingModelVersion || 'kling-3.0';
-            // 🚀 關鍵修正：確保所有模型名稱都帶有 /video 字尾以符合 Kie.ai 規範
             let actualModelName = "kling-3.0/video"; 
             if (selectedKlingModel === 'kling-2.6-pro') actualModelName = imageUrlToUse ? "kling-2.6/image-to-video" : "kling-2.6/text-to-video";
             else if (selectedKlingModel === 'kling-2.5-turbo') actualModelName = imageUrlToUse ? "kling/v2-5-turbo-image-to-video-pro" : "kling/v2-5-turbo-text-to-video-pro";
 
-            const kieInput: any = { 
-                prompt: visualCue, 
-                duration: "5", // 必須是字串格式
-                sound: false 
-            };
-
-            if (imageUrlToUse) {
-                kieInput.image_urls = [imageUrlToUse];  
-            } else {
-                kieInput.aspect_ratio = "9:16";
-            }
-
-            if (actualModelName === "kling-3.0/video") { 
-                kieInput.mode = "pro"; 
-                kieInput.multi_shots = false; 
-            }
+            const kieInput: any = { prompt: visualCue, duration: "5", sound: false };
+            if (imageUrlToUse) { kieInput.image_urls = [imageUrlToUse]; } else { kieInput.aspect_ratio = "9:16"; }
+            if (actualModelName === "kling-3.0/video") { kieInput.mode = "pro"; kieInput.multi_shots = false; }
 
             const submitRes = await fetch('https://api.kie.ai/api/v1/jobs/createTask', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${KIE_API_KEY}`, 'Content-Type': 'application/json' },
@@ -165,7 +151,15 @@ export default async function handler(req: any, res: any) {
             const status = String(rawStatus).toUpperCase();
             
             if (status === 'SUCCESS' || status === 'COMPLETED' || status === 'SUCCEEDED') {
-                const finalUrl = statusData.data?.video_url || statusData.data?.videoUrl || statusData.data?.url || statusData.data?.response?.video_url || statusData.data?.response?.url || statusData.video_url; 
+                // 🚀 嚴格模式：窮舉所有可能的網址欄位
+                let finalUrl = statusData.data?.video_url || statusData.data?.videoUrl || statusData.data?.url || statusData.data?.response?.video_url || statusData.data?.result?.video_url || statusData.video_url; 
+                if (!finalUrl && typeof statusData.data?.result === 'string' && statusData.data.result.startsWith('http')) finalUrl = statusData.data.result;
+
+                // 🚀 如果還是找不到網址，絕對不用黑畫面敷衍，直接把 JSON 攤給你看！
+                if (!finalUrl) {
+                    return res.status(200).json({ success: true, status: 'failed', error: `Kie.ai 顯示算圖成功，但 API 拒絕交出影片網址！原始資料: ${JSON.stringify(statusData)}` });
+                }
+                
                 return res.status(200).json({ success: true, status: 'completed', videoUrl: finalUrl });
             } else if (status === 'FAIL' || status === 'FAILED' || status === 'ERROR') {
                 return res.status(200).json({ success: true, status: 'failed', error: JSON.stringify(statusData) });
@@ -207,12 +201,16 @@ export default async function handler(req: any, res: any) {
             const videoBuffer = fs.readFileSync(outputFilename);
             const blob = await put(`previews/mpt_${Date.now()}.mp4`, videoBuffer, { access: 'public' });
             return res.status(200).json({ success: true, videoUrl: blob.url });
-        } catch (e: any) { return res.status(200).json({ success: false, error: `Assembly Failed: ${e.message}` }); }
+        } catch (e: any) { 
+            const errorMsg = e instanceof Error ? e.message : (e?.message || (typeof e === 'object' ? JSON.stringify(e) : String(e)));
+            return res.status(200).json({ success: false, error: `Assembly Failed: ${errorMsg}` }); 
+        }
       }
 
       default: return res.status(400).json({ success: false, error: 'Invalid Stage' });
     }
   } catch (e: any) { 
-    return res.status(200).json({ success: false, error: `Server Error: ${e.message}` }); 
+    const errorMsg = e instanceof Error ? e.message : (e?.message || String(e));
+    return res.status(200).json({ success: false, error: `Server Error: ${errorMsg}` }); 
   }
 }
