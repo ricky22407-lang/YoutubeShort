@@ -7,6 +7,10 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const [script, setScript] = useState<ScriptData | null>(null);
   const [treatment, setTreatment] = useState<any>(null); 
   
+  // 🚀 核心升級：智慧快取記憶體 (Smart Cache)
+  // 用來記住已經成功生成影片的場景，避免重複發 API 扣錢！
+  const [sceneVideoCache, setSceneVideoCache] = useState<Record<number, string>>({});
+  
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<string>("");
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -44,6 +48,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       if (type === 'product') setConfig({...config, videoEngine: 'kling', useStockFootage: false});
       if (type === 'topic') setConfig({...config, videoEngine: 'veo', useStockFootage: true});
       setScript(null); setTreatment(null);
+      setSceneVideoCache({}); // 🚀 清除快取
   };
 
   const fetchAiSuggestions = async () => {
@@ -68,6 +73,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
     setLoading(true); setLog(`🧠 正在呼叫 Agent 導演規劃企劃大綱...`);
+    setSceneVideoCache({}); // 🚀 重新構思時清除快取
     try {
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -80,11 +86,12 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
   const generateFinalScript = async () => {
     setLoading(true); setLog(`🎬 導演已確認企劃，正在撰寫分鏡腳本...`);
+    setSceneVideoCache({}); // 🚀 產生新腳本時強制清除舊影片快取，避免對應錯誤
     try {
       const finalTopic = customTopic || channel.niche;
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'generate_script', channel, topic: finalTopic, videoType, productDescription, referenceImage, treatment })
+        body: JSON.stringify({ stage: 'generate_script', channel, topic: finalTopic, videoType, productDescription, referenceImage, treatment, targetDuration: config.targetDuration, allowNoVoiceover: config.allowNoVoiceover })
       });
       const data = await res.json();
       if (data.success) { setScript(data.script); setLog(`✅ 分鏡腳本生成完畢！`); } else setLog("錯誤: " + data.error);
@@ -94,6 +101,13 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
   const handleSceneChange = (id: number, field: 'narration' | 'visual_cue', value: string) => {
     if (!script) return;
     setScript({ ...script, scenes: script.scenes.map(scene => scene.id === id ? { ...scene, [field]: value } : scene) });
+    
+    // 如果修改了畫面提示詞，把那幕的快取洗掉，讓它重算
+    if (field === 'visual_cue') {
+        const newCache = { ...sceneVideoCache };
+        delete newCache[id];
+        setSceneVideoCache(newCache);
+    }
   };
 
   const uploadToPlatform = async (platform: string, videoDataUri: string, metadata: any) => {
@@ -116,7 +130,8 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
     try {
       let finalHeygenUrl = undefined;
-      let preGeneratedSceneUrls: Record<number, string> = {};
+      // 🚀 將 React 狀態的快取讀取到本次渲染的區域變數中
+      let currentCache: Record<number, string> = { ...sceneVideoCache };
 
       if (config.videoEngine === 'heygen' && config.heygenAvatarId) {
           setLog('正在提交 HeyGen 渲染任務...'); 
@@ -131,13 +146,19 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               await new Promise(resolve => setTimeout(resolve, 10000));
           }
       } else {
-          setLog(`🎥 啟動逐幕分散運算...`);
+          setLog(`🎥 啟動逐幕分散運算 (已啟動智慧快取防護)...`);
           for (let i = 0; i < script.scenes.length; i++) {
               const scene = script.scenes[i];
+
+              // 🚀 斷點續傳機制：如果快取裡已經有這幕的影片，直接跳過！不浪費 API 點數！
+              if (currentCache[scene.id]) {
+                  setLog(`♻️ 第 ${i+1} 幕影片已存在，跳過生成！(省下一次點數)`);
+                  continue; 
+              }
+
               setLog(`📥 提交第 ${i+1}/${script.scenes.length} 幕算圖請求...`);
               const isFirstSceneWithProduct = !!referenceImage && scene.id === 1;
 
-              // 步驟 1: 提交任務並取得號碼牌
               const submitRes = await fetch('/api/pipeline', {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ stage: 'generate_video_submit', visualCue: scene.visual_cue, isFirstSceneWithProduct, useStockFootage: config.useStockFootage, videoEngine: config.videoEngine, klingModelVersion: config.klingModelVersion, referenceImage: referenceImage || script.referenceImage })
@@ -147,9 +168,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
               if (submitRes.isStock) {
                   setLog(`✅ 第 ${i+1} 幕成功使用圖庫素材！`);
-                  preGeneratedSceneUrls[scene.id] = submitRes.videoUrl;
+                  currentCache[scene.id] = submitRes.videoUrl;
+                  setSceneVideoCache(prev => ({ ...prev, [scene.id]: submitRes.videoUrl })); // 同步寫入 React 狀態
               } else {
-                  // 🚀 依照指令：收到任務 ID 後，什麼都不做直接盲等 4 分鐘 (240秒)
                   setLog(`⏳ 第 ${i+1} 幕任務已送出！系統將嚴格等待 4 分鐘後才開始查詢...`);
                   await new Promise(resolve => setTimeout(resolve, 240000));
                   
@@ -161,8 +182,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                       }).then(r => r.json());
 
                       if (statusRes.status === 'completed') {
-                          setLog(`✅ 第 ${i+1} 幕算圖完成並成功取得影片！`);
-                          preGeneratedSceneUrls[scene.id] = statusRes.videoUrl;
+                          setLog(`✅ 第 ${i+1} 幕算圖完成並成功取得影片！已寫入快取。`);
+                          currentCache[scene.id] = statusRes.videoUrl;
+                          setSceneVideoCache(prev => ({ ...prev, [scene.id]: statusRes.videoUrl })); // 同步寫入 React 狀態，確保下次渲染不遺失
                           break; 
                       } else if (statusRes.status === 'failed' || statusRes.status === 'error') {
                           throw new Error(`場景 ${scene.id} 生成失敗: ${statusRes.error}`);
@@ -170,20 +192,18 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
                       attempts++;
                       setLog(`⏳ 第 ${i+1} 幕持續算圖中... (四分鐘後已輪詢 ${attempts} 次)`);
-                      
                       if (attempts > 30) throw new Error(`場景 ${scene.id} 算圖完全超時 (已等待超過 14 分鐘)`);
-                      
-                      // 🚀 依照指令：每 20 秒詢問一次
                       await new Promise(resolve => setTimeout(resolve, 20000)); 
                   }
               }
           }
       }
 
-      setLog('正在合成最終影片與字幕...');
+      setLog('🚀 啟動極限超速組裝與字幕合成...');
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'render_mpt', channel: tempChannel, scriptData: { ...script, referenceImage: referenceImage || script.referenceImage }, previousVideoUrl: videoUrl, preGeneratedHeygenUrl: finalHeygenUrl, preGeneratedSceneUrls, videoType })
+        // 🚀 把累積好的 currentCache 傳給後端去組裝
+        body: JSON.stringify({ stage: 'render_mpt', channel: tempChannel, scriptData: { ...script, referenceImage: referenceImage || script.referenceImage }, previousVideoUrl: videoUrl, preGeneratedHeygenUrl: finalHeygenUrl, preGeneratedSceneUrls: currentCache, videoType })
       });
       const data = await res.json();
       if (data.success) { setVideoUrl(data.videoUrl); setLog("渲染完成！"); } else setLog("錯誤: " + data.error);
@@ -329,7 +349,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               <div>
                   <label className="text-xs text-zinc-400 block mb-1 font-bold">配音引擎</label>
                   <div className="flex bg-black rounded-lg p-1 border border-zinc-800 mb-2">
-                     <button onClick={() => setConfig({...config, ttsEngine: 'edge', voiceId: 'zh-TW-HsiaoChenNeural'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'edge' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>Edge</button>
+                     <button onClick={() => setConfig({...config, ttsEngine: 'edge', voiceId: 'zh-CN-YunxiNeural'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'edge' ? 'bg-zinc-800 text-white' : 'text-zinc-500'}`}>Edge</button>
                      <button onClick={() => setConfig({...config, ttsEngine: 'elevenlabs', voiceId: 'Puck'})} className={`flex-1 py-2 text-xs font-bold rounded-md ${config.ttsEngine === 'elevenlabs' ? 'bg-purple-900/50 text-purple-400' : 'text-zinc-500'}`}>ElevenLabs</button>
                   </div>
                   {config.ttsEngine === 'elevenlabs' ? (
@@ -431,7 +451,8 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2">
                   {script.scenes.map((scene) => (
-                    <div key={scene.id} className="p-4 bg-black/40 rounded-xl border border-zinc-800 space-y-3">
+                    <div key={scene.id} className="p-4 bg-black/40 rounded-xl border border-zinc-800 space-y-3 relative overflow-hidden">
+                      {sceneVideoCache[scene.id] && <div className="absolute top-0 right-0 bg-emerald-600/80 text-white text-[10px] px-2 py-1 rounded-bl-lg font-bold">已快取 ✅</div>}
                       <div className="text-xs font-mono text-zinc-500">場景 {scene.id}</div>
                       <div><label className="text-[10px] text-zinc-500 font-bold mb-1 block">配音台詞</label><textarea value={scene.narration} onChange={(e) => handleSceneChange(scene.id, 'narration', e.target.value)} className="w-full bg-zinc-900/50 border border-zinc-700/50 p-2 rounded-lg text-sm text-zinc-300 outline-none focus:border-indigo-500 resize-none" rows={2} /></div>
                       <div><label className="text-[10px] text-emerald-600 font-bold mb-1 flex items-center gap-1">👁️ 畫面提示詞</label><textarea value={scene.visual_cue} onChange={(e) => handleSceneChange(scene.id, 'visual_cue', e.target.value)} className="w-full bg-emerald-950/20 border border-emerald-900/30 p-2 rounded-lg text-xs text-emerald-400 outline-none focus:border-emerald-500 resize-none" rows={3} /></div>
