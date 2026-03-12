@@ -104,10 +104,7 @@ export class VideoAssembler {
 
       const targetDur = Math.max(audioDur, 2.5);
       const sceneAssets = [{ video: videoPath, audio: audioPath, duration: targetDur, text: cleanNarration }];
-      
-      // 縮小預設字體至 60，避免過度擁擠
       const subSettings = { fontSize: config?.fontSize ?? 60, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
-      
       const assPath = this.generateSubtitles(sceneAssets, subSettings);
       const { fontsDirEscaped, assPathEscaped } = await this.setupFonts(assPath, subSettings.fontName);
 
@@ -116,9 +113,17 @@ export class VideoAssembler {
               .input(videoPath)
               .input(audioPath)
               .complexFilter([
-                  // 🚀 核心修復 1：改回 pad (Letterbox) 保護畫面，不再強行裁切！
-                  `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
-                  `[v]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
+                  // 🚀 核心升級：動態模糊背景引擎 (Blurred Background)
+                  // 1. 將影片複製為兩份：一份做背景(bg_src)，一份做前景(fg_src)
+                  `[0:v]split=2[bg_src][fg_src]`,
+                  // 2. 背景處理：強制放大填滿 9:16，裁切多餘部分，並加上強度為 25 的高斯模糊
+                  `[bg_src]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=luma_radius=25:luma_power=25[bg]`,
+                  // 3. 前景處理：等比例縮小以確保完整顯示在 720 寬度內
+                  `[fg_src]scale=720:1280:force_original_aspect_ratio=decrease[fg]`,
+                  // 4. 將前景疊加到模糊背景的正中央，並設定時長與幀率
+                  `[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v_merged]`,
+                  // 5. 壓上字幕
+                  `[v_merged]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
               ])
               .outputOptions([
                   '-map [v_sub]', '-map 1:a',
@@ -232,7 +237,16 @@ export class VideoAssembler {
               filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          
+          // Avatar 模式也套用動態模糊背景機制 (避免 HeyGen 產出 16:9 時破圖)
+          filterComplex.push(
+              `[0:v]split=2[bg_src][fg_src]`,
+              `[bg_src]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=luma_radius=25:luma_power=25[bg]`,
+              `[fg_src]scale=720:1280:force_original_aspect_ratio=decrease[fg]`,
+              `[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,format=yuv420p[v_merged]`,
+              `[v_merged]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`
+          );
+
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg: ${err.message}`))).run();
       });
   }
@@ -253,7 +267,6 @@ export class VideoAssembler {
               words.forEach((w: string) => { 
                   karaokeText += `{\\k${charDuration}}${w}`; 
                   charCount++;
-                  // 🚀 核心修復 2：智慧換行系統，每 12~16 個字強制換行，徹底解決字幕超框！
                   if (charCount >= 12 && /[，。！？、,.\s]/.test(w)) {
                       karaokeText += '\\N';
                       charCount = 0;
