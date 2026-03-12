@@ -32,7 +32,6 @@ export class VideoAssembler {
     });
   }
 
-  // 🚀 加入 3 次斷線重試機制，對抗雲端網路瞬斷
   private async downloadFile(url: string, dest: string, timeoutMs: number = 30000, retries: number = 3): Promise<void> {
     for (let attempt = 1; attempt <= retries; attempt++) {
         const controller = new AbortController();
@@ -55,13 +54,16 @@ export class VideoAssembler {
       const moodMap: Record<string, string> = { emotional: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56', energetic: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT', funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt', Relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ', Happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y', Chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF', Epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn' };
       let folderId = moodMap[mood] || moodMap['random'];
       if (mood === 'random') folderId = moodMap[Object.keys(moodMap)[Math.floor(Math.random() * Object.keys(moodMap).length)]];
-      if (!folderId) return '';
       try {
-          const res = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name)&key=${process.env.GOOGLE_DRIVE_API_KEY}`);
-          if (!res.ok) return '';
-          const files = (await res.json()).files || [];
-          if (files.length > 0) return `https://drive.google.com/uc?export=download&id=${files[Math.floor(Math.random() * files.length)].id}`;
-      } catch (error) {} return '';
+          if (process.env.GOOGLE_DRIVE_API_KEY) {
+              const res = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name)&key=${process.env.GOOGLE_DRIVE_API_KEY}`);
+              if (res.ok) {
+                  const files = (await res.json()).files || [];
+                  if (files.length > 0) return `https://drive.google.com/uc?export=download&id=${files[Math.floor(Math.random() * files.length)].id}`;
+              }
+          }
+      } catch (error) {} 
+      return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
   }
 
   private async generateAiVideoMock(outputPath: string): Promise<void> {
@@ -69,26 +71,28 @@ export class VideoAssembler {
   }
 
   async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
-      const commonSettings = { bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf', voiceId: config?.ttsEngine === 'elevenlabs' && config?.elevenLabsVoiceId ? config.elevenLabsVoiceId : (config?.voiceId || 'zh-TW-HsiaoChenNeural'), bgmMood: config?.bgmMood || 'none' };
-      // 只有數字人模式維持原本的一條龍處理 (因為只有一幕)
+      const commonSettings = { bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf', voiceId: config?.voiceId || 'zh-TW-HsiaoChenNeural', bgmMood: config?.bgmMood || 'none' };
       return this.assembleAvatarPipeline(script, outputFilename, commonSettings, preGeneratedHeygenUrl);
   }
 
-  // ====== 🌟 核心新功能：單幕獨立壓製 (Chunking) ======
-  // 伺服器只專心處理 5 秒鐘的畫面，絕對不會觸發 Vercel Timeout
-  async renderSceneChunk(scene: any, videoUrl: string, settings: any, outputPath: string): Promise<string> {
+  async renderSceneChunk(scene: any, videoUrl: string, config: any, outputPath: string): Promise<string> {
       const audioPath = path.join(this.tempDir, `raw_a_${scene.id}.mp3`);
       const videoPath = path.join(this.tempDir, `raw_v_${scene.id}.mp4`);
       const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
+      // 🚀 關鍵修復：精準抓取配置檔中的配音引擎與配音員 ID
+      const ttsEngine = config?.ttsEngine || 'edge';
+      const voiceId = config?.voiceId || 'zh-TW-HsiaoChenNeural';
+
       let audioDur = 0;
       if (cleanNarration.length > 0) {
           try {
-              await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
+              // 把 ttsEngine 正確傳遞給底層模組
+              await this.ttsService.generateAudio(cleanNarration, audioPath, voiceId, ttsEngine);
               audioDur = await this.getDuration(audioPath);
-          } catch(e) { console.warn("TTS失敗:", e); }
+          } catch(e) { console.warn("TTS失敗，將產生靜音:", e); }
       }
-      if (audioDur === 0) {
+      if (audioDur <= 0) {
           await new Promise<void>((res, rej) => { ffmpeg().input('anullsrc').inputFormat('lavfi').outputOptions(['-t 3']).audioCodec('libmp3lame').output(audioPath).on('end', res).on('error', rej).run(); });
           audioDur = 3;
       }
@@ -100,21 +104,20 @@ export class VideoAssembler {
       const targetDur = Math.max(audioDur, 2.5);
       const sceneAssets = [{ video: videoPath, audio: audioPath, duration: targetDur, text: cleanNarration }];
       
-      // 獨立產生這一幕的字幕檔 (時間從 0 開始)
-      const assPath = this.generateSubtitles(sceneAssets, settings);
+      const subSettings = { fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
+      const assPath = this.generateSubtitles(sceneAssets, subSettings);
 
       return new Promise((resolve, reject) => {
-          const { fontsDirEscaped, assPathEscaped } = this.setupFonts(assPath, settings.fontName);
+          const { fontsDirEscaped, assPathEscaped } = this.setupFonts(assPath, subSettings.fontName);
           ffmpeg()
               .input(videoPath)
               .input(audioPath)
               .complexFilter([
-                  `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
+                  `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
                   `[v]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
               ])
               .outputOptions([
                   '-map [v_sub]', '-map 1:a',
-                  // 強制統一所有影片格式，為最後的光速合併鋪路
                   '-c:v libx264', '-preset ultrafast', '-crf 28', '-pix_fmt yuv420p',
                   '-c:a aac', '-ar 44100', '-ac 2', '-shortest'
               ])
@@ -125,26 +128,24 @@ export class VideoAssembler {
       });
   }
 
-  // ====== 🌟 核心新功能：光速無損合併 (Stream Copy) ======
-  // 將所有處理好的單幕影片瞬間拼接，完全不需重新編碼，耗時不到 3 秒！
-  async stitchFinal(chunkUrls: string[], settings: any, outputPath: string): Promise<string> {
+  async stitchFinal(chunkUrls: string[], config: any, outputPath: string): Promise<string> {
       const concatListPath = path.join(this.tempDir, 'concat.txt');
       let concatFileContent = '';
 
-      // 平行下載所有已經壓製好的單幕影片 (極速)
       await Promise.all(chunkUrls.map(async (url, i) => {
           const p = path.join(this.tempDir, `chunk_${i}.mp4`);
           await this.downloadFile(url, p);
       }));
 
-      // 建立 FFmpeg 合併清單
       for (let i = 0; i < chunkUrls.length; i++) {
           const p = path.join(this.tempDir, `chunk_${i}.mp4`);
           concatFileContent += `file '${p.replace(/\\/g, '/')}'\n`;
       }
       fs.writeFileSync(concatListPath, concatFileContent);
 
-      const bgmPath = await this.prepareBGM(settings.bgmMood);
+      const bgmMood = config?.bgmMood || 'none';
+      const bgmVolume = config?.bgmVolume ?? 0.1;
+      const bgmPath = await this.prepareBGM(bgmMood);
 
       return new Promise((resolve, reject) => {
           const cmd = ffmpeg().input(concatListPath).inputOptions(['-f concat', '-safe 0']);
@@ -152,26 +153,17 @@ export class VideoAssembler {
               cmd.input(bgmPath)
                  .complexFilter([
                      `[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`,
-                     `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`,
+                     `[bgm_loop]volume=${bgmVolume}[bgm_low]`,
                      `[0:a][bgm_low]amix=inputs=2:duration=shortest:dropout_transition=2[a_out]`
                  ])
-                 .outputOptions([
-                     '-map 0:v', '-map [a_out]',
-                     '-c:v copy', // 🚀 魔法就在這裡：複製影像位元流，不消耗任何 CPU 編碼時間！
-                     '-c:a aac', '-ar 44100', '-ac 2'
-                 ]);
+                 .outputOptions(['-map 0:v', '-map [a_out]', '-c:v copy', '-c:a aac', '-ar 44100', '-ac 2']);
           } else {
               cmd.outputOptions(['-c copy']);
           }
-
-          cmd.output(outputPath)
-             .on('end', () => resolve(outputPath))
-             .on('error', (err) => reject(new Error(`Stitch FFmpeg: ${err.message}`)))
-             .run();
+          cmd.output(outputPath).on('end', () => resolve(outputPath)).on('error', (err) => reject(new Error(`Stitch FFmpeg: ${err.message}`))).run();
       });
   }
 
-  // (以下為 HeyGen 數字人專用的完整處理流程，維持不變)
   private async assembleAvatarPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedHeygenUrl?: string): Promise<string> {
       if (!preGeneratedHeygenUrl) throw new Error("未收到預先生成的 HeyGen 影片網址！");
       const singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
@@ -196,7 +188,7 @@ export class VideoAssembler {
               filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg: ${err.message}`))).run();
       });
   }
