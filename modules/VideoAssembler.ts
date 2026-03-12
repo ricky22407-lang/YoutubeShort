@@ -60,10 +60,7 @@ export class VideoAssembler {
               if (res.ok) {
                   const data = await res.json();
                   const files = data.files || [];
-                  if (files.length > 0) {
-                      const fileId = files[Math.floor(Math.random() * files.length)].id;
-                      return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`;
-                  }
+                  if (files.length > 0) return `https://www.googleapis.com/drive/v3/files/${files[Math.floor(Math.random() * files.length)].id}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`;
               }
           }
       } catch (error) {} 
@@ -91,7 +88,10 @@ export class VideoAssembler {
           try {
               await this.ttsService.generateAudio(cleanNarration, audioPath, voiceId, ttsEngine);
               audioDur = await this.getDuration(audioPath);
-          } catch(e) { console.warn("TTS失敗，將產生靜音:", e); }
+          } catch(e: any) { 
+              // 🚀 核心修復：如果 ElevenLabs 等配音失敗，立刻丟出錯誤，不再偷偷給靜音！
+              throw new Error(`生成配音失敗: ${e.message}`); 
+          }
       }
       if (audioDur <= 0) {
           await new Promise<void>((res, rej) => { ffmpeg().input('anullsrc').inputFormat('lavfi').outputOptions(['-t 3']).audioCodec('libmp3lame').output(audioPath).on('end', res).on('error', rej).run(); });
@@ -105,6 +105,7 @@ export class VideoAssembler {
       const targetDur = Math.max(audioDur, 2.5);
       const sceneAssets = [{ video: videoPath, audio: audioPath, duration: targetDur, text: cleanNarration }];
       const subSettings = { fontSize: config?.fontSize ?? 60, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
+      
       const assPath = this.generateSubtitles(sceneAssets, subSettings);
       const { fontsDirEscaped, assPathEscaped } = await this.setupFonts(assPath, subSettings.fontName);
 
@@ -113,16 +114,10 @@ export class VideoAssembler {
               .input(videoPath)
               .input(audioPath)
               .complexFilter([
-                  // 🚀 核心升級：動態模糊背景引擎 (Blurred Background)
-                  // 1. 將影片複製為兩份：一份做背景(bg_src)，一份做前景(fg_src)
                   `[0:v]split=2[bg_src][fg_src]`,
-                  // 2. 背景處理：強制放大填滿 9:16，裁切多餘部分，並加上強度為 25 的高斯模糊
                   `[bg_src]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=luma_radius=25:luma_power=25[bg]`,
-                  // 3. 前景處理：等比例縮小以確保完整顯示在 720 寬度內
                   `[fg_src]scale=720:1280:force_original_aspect_ratio=decrease[fg]`,
-                  // 4. 將前景疊加到模糊背景的正中央，並設定時長與幀率
                   `[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v_merged]`,
-                  // 5. 壓上字幕
                   `[v_merged]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
               ])
               .outputOptions([
@@ -147,9 +142,7 @@ export class VideoAssembler {
           localPaths[i] = p;
       }));
 
-      for (let i = 0; i < localPaths.length; i++) {
-          durations[i] = await this.getDuration(localPaths[i]);
-      }
+      for (let i = 0; i < localPaths.length; i++) { durations[i] = await this.getDuration(localPaths[i]); }
 
       const bgmMood = config?.bgmMood || 'none';
       const bgmVolume = config?.bgmVolume ?? 0.1;
@@ -167,9 +160,7 @@ export class VideoAssembler {
                       `[bgm_loop]volume=${bgmVolume}[bgm_low]`,
                       `[0:a][bgm_low]amix=inputs=2:duration=shortest:dropout_transition=2[a_out]`
                   ]).outputOptions(['-map 0:v', '-map [a_out]', '-c:v copy', '-c:a aac', '-ar 44100', '-ac 2']);
-              } else {
-                  cmd.outputOptions(['-c copy']);
-              }
+              } else { cmd.outputOptions(['-c copy']); }
               cmd.output(outputPath).on('end', () => resolve(outputPath)).on('error', (err) => reject(err)).run();
               return;
           }
@@ -186,8 +177,7 @@ export class VideoAssembler {
               const nextA = `a_step${i}`;
               filterComplex += `[${lastV}][${i}:v]xfade=transition=fade:duration=${transitionDuration}:offset=${currentOffset.toFixed(3)}[${nextV}];`;
               filterComplex += `[${lastA}][${i}:a]acrossfade=d=${transitionDuration}[${nextA}];`;
-              lastV = nextV;
-              lastA = nextA;
+              lastV = nextV; lastA = nextA;
           }
 
           let finalAudio = `[${lastA}]`;
@@ -199,20 +189,13 @@ export class VideoAssembler {
               finalAudio = '[a_out]';
           }
 
-          cmd.complexFilter(filterComplex)
-             .outputOptions([
-                 `-map [${lastV}]`, `-map ${finalAudio}`,
-                 '-c:v libx264', '-preset ultrafast', '-crf 28', '-pix_fmt yuv420p',
-                 '-c:a aac', '-ar 44100', '-ac 2'
-             ])
-             .output(outputPath)
-             .on('end', () => resolve(outputPath))
-             .on('error', (err) => reject(new Error(`Stitch FFmpeg: ${err.message}`)))
-             .run();
+          cmd.complexFilter(filterComplex).outputOptions([ `-map [${lastV}]`, `-map ${finalAudio}`, '-c:v libx264', '-preset ultrafast', '-crf 28', '-pix_fmt yuv420p', '-c:a aac', '-ar 44100', '-ac 2' ])
+             .output(outputPath).on('end', () => resolve(outputPath)).on('error', (err) => reject(new Error(`Stitch FFmpeg: ${err.message}`))).run();
       });
   }
 
   private async assembleAvatarPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedHeygenUrl?: string): Promise<string> {
+      // avatar 處理邏輯省略保持不變...
       if (!preGeneratedHeygenUrl) throw new Error("未收到預先生成的 HeyGen 影片網址！");
       const singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
       await this.downloadFile(preGeneratedHeygenUrl, singleVideoPath);
@@ -237,16 +220,7 @@ export class VideoAssembler {
               filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          
-          // Avatar 模式也套用動態模糊背景機制 (避免 HeyGen 產出 16:9 時破圖)
-          filterComplex.push(
-              `[0:v]split=2[bg_src][fg_src]`,
-              `[bg_src]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=luma_radius=25:luma_power=25[bg]`,
-              `[fg_src]scale=720:1280:force_original_aspect_ratio=decrease[fg]`,
-              `[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,format=yuv420p[v_merged]`,
-              `[v_merged]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`
-          );
-
+          filterComplex.push(`[0:v]split=2[bg_src][fg_src]`, `[bg_src]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,boxblur=luma_radius=25:luma_power=25[bg]`, `[fg_src]scale=720:1280:force_original_aspect_ratio=decrease[fg]`, `[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,format=yuv420p[v_merged]`, `[v_merged]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg: ${err.message}`))).run();
       });
   }
@@ -267,10 +241,12 @@ export class VideoAssembler {
               words.forEach((w: string) => { 
                   karaokeText += `{\\k${charDuration}}${w}`; 
                   charCount++;
-                  if (charCount >= 12 && /[，。！？、,.\s]/.test(w)) {
+                  
+                  // 🚀 核心修復：強制 10 個字換行 (因為字體 60，畫面 720 扣掉邊距 80 剩 640。640/60 = 10.6，絕對不能超過 10)
+                  if (charCount >= 8 && /[，。！？、,.\s]/.test(w)) {
                       karaokeText += '\\N';
                       charCount = 0;
-                  } else if (charCount >= 16) {
+                  } else if (charCount >= 10) {
                       karaokeText += '\\N';
                       charCount = 0;
                   }
@@ -294,17 +270,12 @@ export class VideoAssembler {
       const destFontPath = path.join(localFontDir, 'NotoSansCJKtc-Bold.otf');
 
       if (!fs.existsSync(destFontPath)) {
-          console.log(`[VideoAssembler] 正在下載中文字體...`);
-          try {
-              await this.downloadFile('https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf', destFontPath, 30000, 3);
-          } catch (e) { console.error("字體下載失敗:", e); }
+          try { await this.downloadFile('https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf', destFontPath, 30000, 3); } catch (e) {}
       }
 
       const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
       fs.writeFileSync(fontsConfPath, `<?xml version="1.0"?>\n<fontconfig>\n  <dir>${localFontDir.replace(/\\/g, '/')}</dir>\n  <cachedir>${fontConfigDir.replace(/\\/g, '/')}</cachedir>\n  <config></config>\n</fontconfig>`, 'utf8');
-      process.env.FONTCONFIG_PATH = fontConfigDir; 
-      process.env.FONTCONFIG_FILE = fontsConfPath;
-      
+      process.env.FONTCONFIG_PATH = fontConfigDir; process.env.FONTCONFIG_FILE = fontsConfPath;
       return { fontsDirEscaped: this.escapeForFfmpeg(localFontDir), assPathEscaped: this.escapeForFfmpeg(assPath) };
   }
 
