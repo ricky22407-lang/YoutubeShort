@@ -49,6 +49,7 @@ export class VideoAssembler {
     }
   }
 
+  // 🚀 核心修復 2：使用官方 alt=media 通道正確下載 BGM，並加入高音質備用線路
   private async fetchDynamicBgm(mood: string): Promise<string> {
       if (!mood || mood === 'none') return '';
       const moodMap: Record<string, string> = { emotional: '1REsVuxpadReul7F5h4RzfbfWqYgdsd56', energetic: '1BRyzqjynpi_WOudMNuCt8Hd-XZVP4olT', funny: '1ehNbDhxPRwQ2-G3RaCrtrpFCCvsJXBdt', Relaxing: '15oNe3ymR3iI_o7a-yLsMWq2qRJLoojaQ', Happy: '11yLdyL-swvjnX5SIHt4UU_ta5BkZ2J5Y', Chill: '1Z7TTsCMzrFY92jo4H9UmOM6rV5jjQnwF', Epic: '1g4PCrYnwsODXb6nxZrTxFpJ4HXsA3PEn' };
@@ -58,12 +59,19 @@ export class VideoAssembler {
           if (process.env.GOOGLE_DRIVE_API_KEY) {
               const res = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name)&key=${process.env.GOOGLE_DRIVE_API_KEY}`);
               if (res.ok) {
-                  const files = (await res.json()).files || [];
-                  if (files.length > 0) return `https://drive.google.com/uc?export=download&id=${files[Math.floor(Math.random() * files.length)].id}`;
+                  const data = await res.json();
+                  const files = data.files || [];
+                  if (files.length > 0) {
+                      const fileId = files[Math.floor(Math.random() * files.length)].id;
+                      // 這是正確繞過掃毒警告，直接取得 mp3 檔案的 API 寫法
+                      return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${process.env.GOOGLE_DRIVE_API_KEY}`;
+                  }
               }
           }
-      } catch (error) {} 
-      return 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+      } catch (error) { console.warn("[BGM] Google Drive 抓取失敗"); } 
+      
+      // 確保影片絕對不會沒有音樂 (高品質無版權音樂)
+      return 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3';
   }
 
   private async generateAiVideoMock(outputPath: string): Promise<void> {
@@ -80,14 +88,12 @@ export class VideoAssembler {
       const videoPath = path.join(this.tempDir, `raw_v_${scene.id}.mp4`);
       const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
-      // 🚀 關鍵修復：精準抓取配置檔中的配音引擎與配音員 ID
       const ttsEngine = config?.ttsEngine || 'edge';
       const voiceId = config?.voiceId || 'zh-TW-HsiaoChenNeural';
 
       let audioDur = 0;
       if (cleanNarration.length > 0) {
           try {
-              // 把 ttsEngine 正確傳遞給底層模組
               await this.ttsService.generateAudio(cleanNarration, audioPath, voiceId, ttsEngine);
               audioDur = await this.getDuration(audioPath);
           } catch(e) { console.warn("TTS失敗，將產生靜音:", e); }
@@ -103,17 +109,20 @@ export class VideoAssembler {
 
       const targetDur = Math.max(audioDur, 2.5);
       const sceneAssets = [{ video: videoPath, audio: audioPath, duration: targetDur, text: cleanNarration }];
-      
       const subSettings = { fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
+      
       const assPath = this.generateSubtitles(sceneAssets, subSettings);
 
+      // 記得加上 await，因為 setupFonts 現在會動態下載字體
+      const { fontsDirEscaped, assPathEscaped } = await this.setupFonts(assPath, subSettings.fontName);
+
       return new Promise((resolve, reject) => {
-          const { fontsDirEscaped, assPathEscaped } = this.setupFonts(assPath, subSettings.fontName);
           ffmpeg()
               .input(videoPath)
               .input(audioPath)
               .complexFilter([
-                  `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
+                  // 🚀 核心修復 3：強制畫面填滿 720x1280 (裁切多餘邊角，維持 9:16 完美直立比例，無黑邊！)
+                  `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
                   `[v]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
               ])
               .outputOptions([
@@ -178,8 +187,9 @@ export class VideoAssembler {
       }
       const assPath = this.generateSubtitles(sceneAssets, settings);
       const bgmPath = await this.prepareBGM(settings.bgmMood);
+      const { fontsDirEscaped, assPathEscaped } = await this.setupFonts(assPath, settings.fontName);
+      
       return new Promise((resolve, reject) => {
-          const { fontsDirEscaped, assPathEscaped } = this.setupFonts(assPath, settings.fontName);
           const cmd = ffmpeg().input(singleVideoPath);
           const filterComplex = [];
           let aFinal = '0:a';
@@ -188,7 +198,7 @@ export class VideoAssembler {
               filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg: ${err.message}`))).run();
       });
   }
@@ -209,24 +219,37 @@ export class VideoAssembler {
           assEvents += `Dialogue: 0,${formatAssTime(currentTime)},${formatAssTime(currentTime + asset.duration)},Default,,0,0,0,,${karaokeText}\n`;
           currentTime += asset.duration;
       }
-      const fontMap: Record<string, string> = { 'NotoSansTC-Bold.ttf': 'Noto Sans TC', 'NotoSerifTC-Bold.ttf': 'Noto Serif TC', 'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe', 'Roboto-Bold.ttf': 'Roboto', 'Anton-Regular.ttf': 'Anton', 'Bangers-Regular.ttf': 'Bangers' };
-      const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${fontMap[settings.fontName] || 'Noto Sans TC'},${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+      
+      // 強制將字幕映射到我們動態下載的 "Noto Sans CJK TC" 字體上
+      const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
       fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
       return assPath;
   }
 
-  private setupFonts(assPath: string, fontName: string) {
-      const fontConfigDir = path.join(this.tempDir, 'fontconfig'), localFontDir = path.join(this.tempDir, 'fonts_cache');
+  // 🚀 核心修復 1：無懼 Vercel 環境，動態為 FFmpeg 注入中文字體
+  private async setupFonts(assPath: string, fontName: string) {
+      const fontConfigDir = path.join(this.tempDir, 'fontconfig');
+      const localFontDir = path.join(this.tempDir, 'fonts_cache');
       if (!fs.existsSync(fontConfigDir)) fs.mkdirSync(fontConfigDir, { recursive: true });
       if (!fs.existsSync(localFontDir)) fs.mkdirSync(localFontDir, { recursive: true });
-      let systemFontDir = path.join(process.cwd(), 'fonts');
-      if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../fonts');
-      if (!fs.existsSync(systemFontDir)) systemFontDir = path.join(__dirname, '../../fonts');
-      const sourceFontPath = path.join(systemFontDir, fontName), destFontPath = path.join(localFontDir, fontName);
-      if (fs.existsSync(sourceFontPath)) fs.copyFileSync(sourceFontPath, destFontPath);
+
+      const destFontPath = path.join(localFontDir, 'NotoSansCJKtc-Bold.otf');
+
+      // Vercel 部署時通常不包含字體，我們強制從 CDN 即時下載一次
+      if (!fs.existsSync(destFontPath)) {
+          console.log(`[VideoAssembler] 正在下載中文字體 (解決 Vercel 字幕不顯示問題)...`);
+          try {
+              await this.downloadFile('https://cdn.jsdelivr.net/gh/googlefonts/noto-cjk@main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Bold.otf', destFontPath, 30000, 3);
+          } catch (e) {
+              console.error("字體下載失敗:", e);
+          }
+      }
+
       const fontsConfPath = path.join(fontConfigDir, 'fonts.conf');
       fs.writeFileSync(fontsConfPath, `<?xml version="1.0"?>\n<fontconfig>\n  <dir>${localFontDir.replace(/\\/g, '/')}</dir>\n  <cachedir>${fontConfigDir.replace(/\\/g, '/')}</cachedir>\n  <config></config>\n</fontconfig>`, 'utf8');
-      process.env.FONTCONFIG_PATH = fontConfigDir; process.env.FONTCONFIG_FILE = fontsConfPath;
+      process.env.FONTCONFIG_PATH = fontConfigDir; 
+      process.env.FONTCONFIG_FILE = fontsConfPath;
+      
       return { fontsDirEscaped: this.escapeForFfmpeg(localFontDir), assPathEscaped: this.escapeForFfmpeg(assPath) };
   }
 
