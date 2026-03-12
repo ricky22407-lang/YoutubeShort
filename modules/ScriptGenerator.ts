@@ -51,25 +51,28 @@ export class ScriptGenerator {
     if (videoType === 'avatar') {
         systemInstruction = `【AVATAR PRESENTER MODE】\nYou are an expert scriptwriter for AI Avatar videos. Write a highly engaging, conversational script.\n'narration': Spoken language, fast-paced.\n'visual_cue': Keep it simple (e.g., "Excited expression, text pops up").`;
     } else if (videoType === 'product') {
-        let productContext = referenceImage ? "The user provided a product reference image." : "Focus on the product details.";
+        let productContext = "Focus on the product details.";
         if (productDescription) productContext += `\n【CRITICAL: PRODUCT DETAILS】\nThe user explicitly stated: "${productDescription}". You MUST incorporate this into the 'visual_cue' whenever the product is shown.`;
         systemInstruction = `【COMMERCIAL PRODUCT MODE】\nYou are an elite commercial director. ${productContext}\n'visual_cue': Explicitly describe the product in every scene. Add cinematic style keywords.`;
     } else {
         systemInstruction = `【VIRAL TOPIC MODE】\nYou are a viral Shorts creator.\n'visual_cue': Write prompts for AI B-roll generation matching the narration. Keep actions simple.`;
     }
 
-    // 🚀 核心升級：嚴格限制幕數，解決畫面破碎不連貫的問題
+    // 🚀 核心升級 1：嚴格限制幕數，強迫長鏡頭
     const durationMap: Record<string, string> = {
-        '10': '10 seconds MAX! STRICTLY 1 SCENE ONLY. Do NOT split into multiple scenes. Total words: 15-25.',
-        '15': '15 seconds MAX! MAXIMUM 2 SCENES. Total words: 25-35.',
-        '20': '20 seconds MAX! MAXIMUM 2 SCENES. Total words: 35-50.',
-        '30': '30 seconds MAX! MAXIMUM 3 SCENES. Make scenes long and continuous. Total words: 50-70.',
-        '60': '60 seconds MAX! MAXIMUM 5 SCENES. Make scenes long and continuous. Total words: 130-160.'
+        '10': '10 seconds MAX! STRICTLY 1 SCENE ONLY. Do NOT split into multiple scenes.',
+        '15': '15 seconds MAX! MAXIMUM 2 SCENES.',
+        '20': '20 seconds MAX! MAXIMUM 2 SCENES.',
+        '30': '30 seconds MAX! MAXIMUM 3 SCENES. Make scenes long and continuous.',
+        '60': '60 seconds MAX! MAXIMUM 5 SCENES. Make scenes long and continuous.'
     };
     
-    let durationRule = `\n【CRITICAL LENGTH & SCENE PACING RULE】 The entire video MUST be strictly ${durationMap[targetDuration] || durationMap['30']}\nTo maintain visual continuity, DO NOT over-cut. If the limit is 1 SCENE, output exactly ONE object in the scenes array.`;
-    let voiceoverRule = allowNoVoiceover ? `\n【OPTIONAL VOICEOVER】 If you decide a scene does not need voiceover (purely visual + music), leave the 'narration' field completely empty ("").` : `\n【MANDATORY VOICEOVER】 Every scene MUST have spoken 'narration'. Do not leave it empty.`;
-    let formattingRule = `\n【CRITICAL FORMATTING RULE】 NEVER use brackets like 【】, [], (), or <> in the 'visual_cue' or 'narration'. Write ONLY in plain text. Special characters will CRASH the downstream video generation API.`;
+    let durationRule = `\n【CRITICAL LENGTH & SCENE PACING RULE】 The entire video MUST be strictly ${durationMap[targetDuration] || durationMap['30']}\nTo maintain visual continuity, DO NOT over-cut.`;
+    let voiceoverRule = allowNoVoiceover ? `\n【OPTIONAL VOICEOVER】 If a scene does not need voiceover, leave the 'narration' field completely empty ("").` : `\n【MANDATORY VOICEOVER】 Every scene MUST have spoken 'narration'. Do not leave it empty.`;
+    let formattingRule = `\n【CRITICAL FORMATTING RULE】 NEVER use brackets like 【】, [], (), or <> in the 'visual_cue' or 'narration'. Write ONLY in plain text.`;
+    
+    // 🚀 核心升級 2：光影環境鎖定 (Visual Anchor)
+    let visualAnchorRule = `\n【CRITICAL VISUAL ANCHOR】 You MUST append this exact phrase to the very end of EVERY 'visual_cue': ", cinematic lighting, consistent color grading, 4k, hyperrealistic". This ensures AI generates a cohesive style across different angles.`;
 
     const prompt = `
       ${systemInstruction}
@@ -77,6 +80,7 @@ export class ScriptGenerator {
       ${durationRule}
       ${voiceoverRule}
       ${formattingRule}
+      ${visualAnchorRule}
 
       Topic: ${topic}
       Language: ${language}
@@ -88,8 +92,8 @@ export class ScriptGenerator {
         "scenes": [
           {
             "id": 1,
-            "narration": "The spoken text for this scene (leave empty if no voiceover).",
-            "visual_cue": "Detailed instruction based on the current mode. Pure plain text ONLY."
+            "narration": "The spoken text for this scene.",
+            "visual_cue": "Detailed instruction + the mandatory visual anchor phrase."
           }
         ],
         "socialMediaCopy": { "title": "SEO optimized title", "description": "Hashtags and description" }
@@ -100,6 +104,6 @@ export class ScriptGenerator {
     const resultText = response.text;
     if (!resultText) throw new Error("Failed to generate script");
     const data = JSON.parse(resultText.replace(/```json/g, '').replace(/```/g, '').trim());
-    return { ...data, referenceImage: referenceImage || undefined };
+    return data;
   }
 }
