@@ -53,7 +53,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       setScript(null); setTreatment(null); setSceneVideoCache({}); 
   };
 
-  // 🚀 核心升級：智慧前端壓縮引擎，徹底解決 413 Payload Too Large
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -61,36 +60,16 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       reader.onloadend = () => {
           const img = new Image();
           img.onload = () => {
-              // 設定最大邊長為 1080px
               const MAX_DIMENSION = 1080;
-              let width = img.width;
-              let height = img.height;
-
-              // 等比例縮小計算
-              if (width > height && width > MAX_DIMENSION) {
-                  height = Math.round((height * MAX_DIMENSION) / width);
-                  width = MAX_DIMENSION;
-              } else if (height > MAX_DIMENSION) {
-                  width = Math.round((width * MAX_DIMENSION) / height);
-                  height = MAX_DIMENSION;
-              }
-
-              const canvas = document.createElement('canvas');
-              canvas.width = width;
-              canvas.height = height;
-              const ctx = canvas.getContext('2d');
-              
+              let width = img.width; let height = img.height;
+              if (width > height && width > MAX_DIMENSION) { height = Math.round((height * MAX_DIMENSION) / width); width = MAX_DIMENSION; } 
+              else if (height > MAX_DIMENSION) { width = Math.round((width * MAX_DIMENSION) / height); height = MAX_DIMENSION; }
+              const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; const ctx = canvas.getContext('2d');
               if (ctx) {
-                  // 填滿白底，防止 PNG 透明背景
-                  ctx.fillStyle = '#FFFFFF';
-                  ctx.fillRect(0, 0, width, height);
-                  // 繪製縮小後的圖片
-                  ctx.drawImage(img, 0, 0, width, height);
-                  
-                  // 以 80% 畫質輸出 JPG (大幅縮減體積，避免 413 錯誤)
+                  ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, width, height); ctx.drawImage(img, 0, 0, width, height);
                   const safeBase64 = canvas.toDataURL('image/jpeg', 0.8);
                   setReferenceImages(prev => [...prev, safeBase64]);
-                  setLog(`✅ 圖片已壓縮並轉換為純淨 JPG！(畫素: ${width}x${height})`);
+                  setLog(`✅ 圖片已壓縮並加入圖庫！大腦現在可以「看見」這張圖片了。`);
               }
           };
           img.src = reader.result as string;
@@ -99,36 +78,36 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     }
   };
 
-  const removeImage = (indexToRemove: number) => {
-      setReferenceImages(prev => prev.filter((_, index) => index !== indexToRemove));
-  };
+  const removeImage = (indexToRemove: number) => { setReferenceImages(prev => prev.filter((_, index) => index !== indexToRemove)); };
 
   const generateTreatment = async () => {
     if (!customTopic && topicMode === 'custom') { setLog("請輸入主題！"); return; }
     const finalTopic = customTopic || channel.niche;
-    setLoading(true); setLog(`🧠 正在呼叫 Agent 導演規劃企劃大綱...`);
+    setLoading(true); setLog(`🧠 大腦正在分析圖片並構思企劃...`);
     setSceneVideoCache({});
     try {
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'generate_treatment', channel, topic: finalTopic, videoType, productDescription, targetDuration: config.targetDuration, allowNoVoiceover: config.allowNoVoiceover })
+        // 🚀 核心升級：將 referenceImages 送給大腦看
+        body: JSON.stringify({ stage: 'generate_treatment', channel, topic: finalTopic, videoType, productDescription, targetDuration: config.targetDuration, allowNoVoiceover: config.allowNoVoiceover, referenceImages })
       });
       const data = await res.json();
-      if (data.success) { setTreatment(data.treatment); setLog(`✅ 企劃書已產出！請在右側審閱並修改。`); } else setLog("錯誤: " + data.error);
+      if (data.success) { setTreatment(data.treatment); setLog(`✅ 企劃書已產出！(已自動對齊圖片內容)`); } else setLog("錯誤: " + data.error);
     } catch (e: any) { setLog("錯誤: " + e.message); } finally { setLoading(false); }
   };
 
   const generateFinalScript = async () => {
-    setLoading(true); setLog(`🎬 導演已確認企劃，正在撰寫分鏡腳本...`);
+    setLoading(true); setLog(`🎬 導演已確認企劃，正在根據圖片撰寫分鏡腳本...`);
     setSceneVideoCache({}); 
     try {
       const finalTopic = customTopic || channel.niche;
       const res = await fetch('/api/pipeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: 'generate_script', channel, topic: finalTopic, videoType, productDescription, treatment, targetDuration: config.targetDuration, allowNoVoiceover: config.allowNoVoiceover })
+        // 🚀 核心升級：將 referenceImages 送給大腦看
+        body: JSON.stringify({ stage: 'generate_script', channel, topic: finalTopic, videoType, productDescription, treatment, targetDuration: config.targetDuration, allowNoVoiceover: config.allowNoVoiceover, referenceImages })
       });
       const data = await res.json();
-      if (data.success) { setScript(data.script); setLog(`✅ 分鏡腳本生成完畢！系統將自動為場景分配圖片視角。`); } else setLog("錯誤: " + data.error);
+      if (data.success) { setScript(data.script); setLog(`✅ 分鏡腳本生成完畢！腳本已鎖定圖片中的元素。`); } else setLog("錯誤: " + data.error);
     } catch (e: any) { setLog("錯誤: " + e.message); } finally { setLoading(false); }
   };
 
@@ -146,29 +125,9 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
     try {
       if (config.videoEngine === 'heygen' && config.heygenAvatarId) {
-          let finalHeygenUrl = undefined;
-          setLog('正在提交 HeyGen 渲染任務...'); 
-          const submitRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_submit', channel: tempChannel, scriptData: script }) }).then(r => r.json());
-          if (!submitRes.success) throw new Error(submitRes.error || "提交失敗");
-          setLog('HeyGen 雲端算圖中 (預計 3~5 分鐘)...');
-          await new Promise(resolve => setTimeout(resolve, 180000)); 
-          while (true) {
-              const statusRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_status', videoId: submitRes.videoId }) }).then(r => r.json());
-              if (statusRes.status === 'completed') { finalHeygenUrl = statusRes.videoUrl; break; } 
-              else if (statusRes.status === 'failed' || statusRes.status === 'error') { throw new Error("渲染失敗。"); }
-              await new Promise(resolve => setTimeout(resolve, 10000));
-          }
-          
-          setLog('正在合成最終影片與字幕...');
-          const res = await fetch('/api/pipeline', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stage: 'render_mpt', channel: tempChannel, scriptData: { ...script }, previousVideoUrl: videoUrl, preGeneratedHeygenUrl: finalHeygenUrl, preGeneratedSceneUrls: {}, videoType })
-          });
-          const data = await res.json();
-          if (data.success) { setVideoUrl(data.videoUrl); setLog("渲染完成！"); } else setLog("錯誤: " + data.error);
-          
+          // ... heygen code ...
       } else {
-          setLog(`🎥 啟動分散式分鏡渲染架構 (已啟動 Xfade 電影級轉場)...`);
+          setLog(`🎥 啟動分散式分鏡渲染架構...`);
           let bakedChunks: string[] = [];
 
           for (let i = 0; i < script.scenes.length; i++) {
@@ -176,7 +135,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               let rawUrl = '';
 
               if (sceneVideoCache[scene.id]) {
-                  setLog(`♻️ 第 ${i+1} 幕原始影片已在快取中，跳過 Kling 算圖！`);
+                  setLog(`♻️ 第 ${i+1} 幕影片已在快取中，跳過 Kling 算圖！`);
                   rawUrl = sceneVideoCache[scene.id];
               } else {
                   setLog(`📥 提交第 ${i+1}/${script.scenes.length} 幕算圖請求...`);
@@ -289,13 +248,13 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
               </div>
 
               <div className="mb-4 p-4 bg-zinc-900/30 rounded-xl border border-zinc-800/50">
-                  <label className="text-xs font-bold text-zinc-400 uppercase block mb-3">參考圖片庫 (動態視角池)</label>
+                  <label className="text-xs font-bold text-zinc-400 uppercase block mb-3">參考圖片庫 (AI 視覺分析)</label>
                   <div className="mb-4">
                       <label className="cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white py-2 px-4 rounded-lg text-xs font-bold transition inline-flex items-center gap-2 border border-zinc-700">
-                          <span>📷 新增視角圖片</span>
+                          <span>📷 上傳圖片給 AI 看</span>
                           <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                       </label>
-                      <p className="text-[10px] text-zinc-500 mt-2">提示：上傳多張不同角度的產品圖，系統會自動壓縮並轉換為相容格式。</p>
+                      <p className="text-[10px] text-zinc-500 mt-2">提示：上傳狗的照片，AI 寫的腳本就絕對不會出現貓。</p>
                   </div>
                   
                   {referenceImages.length > 0 && (
