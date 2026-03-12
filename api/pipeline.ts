@@ -80,7 +80,7 @@ export default async function handler(req: any, res: any) {
             }
             const operation = await ai.models.generateVideos({
                 model: 'veo-2.0-generate-001', prompt: visualCue, image: imageInput,
-                config: { numberOfVideos: 1, resolution: '1080p', aspectRatio: '9:16' }
+                config: { numberOfVideos: 1, aspectRatio: '9:16' }
             });
             return res.status(200).json({ success: true, isStock: false, taskId: operation.name, operation });
         } 
