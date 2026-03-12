@@ -58,17 +58,17 @@ export class ScriptGenerator {
         systemInstruction = `【VIRAL TOPIC MODE】\nYou are a viral Shorts creator.\n'visual_cue': Write prompts for AI B-roll generation matching the narration. Keep actions simple.`;
     }
 
+    // 🚀 核心升級：嚴格限制幕數，解決畫面破碎不連貫的問題
     const durationMap: Record<string, string> = {
-        '10': '10 seconds MAX! Total words: 15-25. Extreme fast pacing.',
-        '15': '15 seconds MAX! Total words: 25-35. Very fast pacing.',
-        '20': '20 seconds MAX! Total words: 35-50. Fast pacing.',
-        '30': '30 seconds MAX! Total words: 50-70. Upbeat pacing.',
-        '60': '60 seconds MAX! Total words: 130-160. Normal pacing.'
+        '10': '10 seconds MAX! STRICTLY 1 SCENE ONLY. Do NOT split into multiple scenes. Total words: 15-25.',
+        '15': '15 seconds MAX! MAXIMUM 2 SCENES. Total words: 25-35.',
+        '20': '20 seconds MAX! MAXIMUM 2 SCENES. Total words: 35-50.',
+        '30': '30 seconds MAX! MAXIMUM 3 SCENES. Make scenes long and continuous. Total words: 50-70.',
+        '60': '60 seconds MAX! MAXIMUM 5 SCENES. Make scenes long and continuous. Total words: 130-160.'
     };
-    let durationRule = `\n【CRITICAL LENGTH RULE】 The entire video MUST be strictly ${durationMap[targetDuration] || durationMap['30']}`;
-    let voiceoverRule = allowNoVoiceover ? `\n【OPTIONAL VOICEOVER】 If you decide a scene does not need voiceover (purely visual + music), leave the 'narration' field completely empty ("").` : `\n【MANDATORY VOICEOVER】 Every scene MUST have spoken 'narration'. Do not leave it empty.`;
     
-    // 🚀 終極防呆：嚴格禁止 AI 產生任何可能搞死影片引擎的括號符號
+    let durationRule = `\n【CRITICAL LENGTH & SCENE PACING RULE】 The entire video MUST be strictly ${durationMap[targetDuration] || durationMap['30']}\nTo maintain visual continuity, DO NOT over-cut. If the limit is 1 SCENE, output exactly ONE object in the scenes array.`;
+    let voiceoverRule = allowNoVoiceover ? `\n【OPTIONAL VOICEOVER】 If you decide a scene does not need voiceover (purely visual + music), leave the 'narration' field completely empty ("").` : `\n【MANDATORY VOICEOVER】 Every scene MUST have spoken 'narration'. Do not leave it empty.`;
     let formattingRule = `\n【CRITICAL FORMATTING RULE】 NEVER use brackets like 【】, [], (), or <> in the 'visual_cue' or 'narration'. Write ONLY in plain text. Special characters will CRASH the downstream video generation API.`;
 
     const prompt = `
