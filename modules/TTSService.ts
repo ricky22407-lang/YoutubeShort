@@ -27,18 +27,28 @@ export class TTSService {
         if (engine === 'elevenlabs') {
             if (!this.elevenLabsApiKey) throw new Error("ELEVENLABS_API_KEY missing.");
             
-            // 🚀 核心修復 3：改用相容性與速度最高的 turbo_v2.5 模型，降低報錯率
+            // 🚀 核心修復：使用官方強烈推薦的 multilingual_v2 模型 (對中文支援最完美，不易報錯)
+            // 並加上了 Accept: audio/mpeg 確保返回正確格式
             const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${cleanVoice}`, {
-                method: 'POST', headers: { 'xi-api-key': this.elevenLabsApiKey, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text, model_id: 'eleven_turbo_v2_5', voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+                method: 'POST', 
+                headers: { 
+                    'xi-api-key': this.elevenLabsApiKey, 
+                    'Content-Type': 'application/json',
+                    'Accept': 'audio/mpeg'
+                },
+                body: JSON.stringify({ 
+                    text: text, 
+                    model_id: 'eleven_multilingual_v2', 
+                    voice_settings: { stability: 0.5, similarity_boost: 0.75 } 
+                }),
             });
             
             if (!response.ok) {
                 const errText = await response.text();
-                // 把 ElevenLabs 最真實的報錯印出來，不再默默失敗！
-                console.error(`[ElevenLabs 致命錯誤] 額度耗盡或格式錯誤: HTTP ${response.status} - ${errText}`);
-                throw new Error(`ElevenLabs API Error: ${errText}`);
+                console.error(`[ElevenLabs 致命錯誤] HTTP ${response.status} - ${errText}`);
+                throw new Error(`ElevenLabs API 拒絕請求: ${errText}`);
             }
+            
             fs.writeFileSync(outputPath, Buffer.from(await response.arrayBuffer()));
             return null; 
         } else {
