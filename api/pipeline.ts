@@ -27,7 +27,6 @@ export default async function handler(req: any, res: any) {
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
-      // 🚀 新增功能：系統健康檢查與 API 探測
       case 'test_config': {
         const { mptConfig } = req.body;
         const logs: string[] = [];
@@ -35,7 +34,6 @@ export default async function handler(req: any, res: any) {
 
         logs.push("🔍 [檢測開始] 正在驗證系統環境與 API 狀態...");
 
-        // 1. 影像引擎檢測
         if (mptConfig.videoEngine === 'kling') {
             if (!process.env.KIE_API_KEY) { logs.push("❌ Kling: 未設定 KIE_API_KEY 環境變數！"); allPass = false; }
             else logs.push("✅ Kling: API Key 已設定。");
@@ -48,22 +46,33 @@ export default async function handler(req: any, res: any) {
              else logs.push("✅ HeyGen: API Key 與 Avatar ID 已就緒。");
         }
 
-        // 2. 配音引擎檢測 (精準測試 ElevenLabs Voice ID)
+        // 🚀 核心修復：強制清除首尾空白，並抓取 ElevenLabs 詳細報錯
         if (mptConfig.ttsEngine === 'elevenlabs') {
             if (!process.env.ELEVENLABS_API_KEY) {
                 logs.push("❌ ElevenLabs: 未設定 ELEVENLABS_API_KEY 環境變數！"); allPass = false;
             } else {
                 try {
-                    const ttsRes = await fetch(`https://api.elevenlabs.io/v1/voices/${mptConfig.voiceId}`, { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY } });
-                    if (ttsRes.ok) logs.push(`✅ ElevenLabs: Voice ID (${mptConfig.voiceId}) 驗證成功！`);
-                    else { logs.push(`❌ ElevenLabs: Voice ID 無效或額度耗盡 (HTTP ${ttsRes.status})`); allPass = false; }
-                } catch(e) { logs.push(`❌ ElevenLabs: API 連線失敗！`); allPass = false; }
+                    const cleanVoiceId = (mptConfig.voiceId || '').trim();
+                    if (!cleanVoiceId) {
+                        logs.push("❌ ElevenLabs: Voice ID 為空！"); allPass = false;
+                    } else {
+                        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/voices/${cleanVoiceId}`, { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY } });
+                        if (ttsRes.ok) {
+                            logs.push(`✅ ElevenLabs: Voice ID (${cleanVoiceId}) 驗證成功！`);
+                        } else { 
+                            const errText = await ttsRes.text();
+                            logs.push(`❌ ElevenLabs: 驗證失敗 (HTTP ${ttsRes.status})`); 
+                            logs.push(`   檢測的 ID: "${cleanVoiceId}"`);
+                            logs.push(`   官方報錯訊息: ${errText}`);
+                            allPass = false; 
+                        }
+                    }
+                } catch(e: any) { logs.push(`❌ ElevenLabs: API 連線失敗 (${e.message})`); allPass = false; }
             }
         } else {
             logs.push(`✅ Edge TTS: 免費配音已準備就緒 (${mptConfig.voiceId})。`);
         }
 
-        // 3. 圖庫檢測
         if (mptConfig.useStockFootage) {
             if (!PEXELS_API_KEY) { logs.push("❌ Pexels: 混合模式需要圖庫，但未設定 PEXELS_API_KEY！"); allPass = false; }
             else {
@@ -75,7 +84,6 @@ export default async function handler(req: any, res: any) {
             }
         }
 
-        // 4. BGM 檢測
         if (mptConfig.bgmMood !== 'none') {
             if (!process.env.GOOGLE_DRIVE_API_KEY) {
                 logs.push("⚠️ BGM: 未設定 Google Drive API Key，系統將降級使用備用無版權音樂。");
