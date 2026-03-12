@@ -12,9 +12,13 @@ export class ScriptGenerator {
     console.log(`[ScriptGenerator] 生成導演企劃, 主題: ${topic}, 類型: ${videoType}, 時長: ${targetDuration}s`);
     
     let systemInstruction = "You are an elite creative director for YouTube Shorts.";
-    if (videoType === 'avatar') systemInstruction += " Focus on a charismatic, fast-paced avatar presenter speaking directly to the camera.";
-    if (videoType === 'product') systemInstruction += ` Focus on a highly engaging commercial. Product details: ${productDescription || 'N/A'}`;
-    if (videoType === 'topic') systemInstruction += " Focus on highly engaging B-roll storytelling with voiceover.";
+    if (videoType === 'avatar') {
+        systemInstruction += " Focus on a charismatic, fast-paced avatar presenter speaking directly to the camera.";
+    } else if (videoType === 'product') {
+        systemInstruction += ` Focus on a highly engaging commercial. Product details: ${productDescription || 'N/A'}`;
+    } else {
+        systemInstruction += " Focus on highly engaging B-roll storytelling with voiceover.";
+    }
 
     let durationPrompt = `Target Video Duration: ${targetDuration} seconds.`;
     let voiceoverPrompt = allowNoVoiceover ? "If the concept works better as a purely visual experience with music, you can plan for NO voiceover." : "Voiceover is REQUIRED for this video.";
@@ -36,7 +40,24 @@ export class ScriptGenerator {
       }
     `;
 
-    const response = await this.ai.models.generateContent({ model: 'gemini-2.5-pro', contents: prompt, config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { coreAngle: { type: Type.STRING }, targetEmotion: { type: Type.STRING }, hookStrategy: { type: Type.STRING }, visualStyle: { type: Type.STRING } }, required: ["coreAngle", "targetEmotion", "hookStrategy", "visualStyle"] } } });
+    const response = await this.ai.models.generateContent({ 
+        model: 'gemini-2.5-pro', 
+        contents: prompt, 
+        config: { 
+            responseMimeType: "application/json", 
+            responseSchema: { 
+                type: Type.OBJECT, 
+                properties: { 
+                    coreAngle: { type: Type.STRING }, 
+                    targetEmotion: { type: Type.STRING }, 
+                    hookStrategy: { type: Type.STRING }, 
+                    visualStyle: { type: Type.STRING } 
+                }, 
+                required: ["coreAngle", "targetEmotion", "hookStrategy", "visualStyle"] 
+            } 
+        } 
+    });
+    
     const resultText = response.text;
     if (!resultText) throw new Error("Failed to generate treatment");
     return JSON.parse(resultText.replace(/```json/g, '').replace(/```/g, '').trim());
@@ -48,17 +69,19 @@ export class ScriptGenerator {
     let systemInstruction = "";
     let treatmentContext = treatment ? `\n【DIRECTOR'S TREATMENT (STRICT ALIGNMENT)】\nYou MUST align the script tightly with this approved treatment:\n- Core Angle: ${treatment.coreAngle}\n- Emotion: ${treatment.targetEmotion}\n- Hook Strategy: ${treatment.hookStrategy}\n- Visual Style: ${treatment.visualStyle}\n` : "";
 
+    // 🛡️ 隔離模式邏輯
     if (videoType === 'avatar') {
-        systemInstruction = `【AVATAR PRESENTER MODE】\nYou are an expert scriptwriter for AI Avatar videos. Write a highly engaging, conversational script.\n'narration': Spoken language, fast-paced.\n'visual_cue': Keep it simple (e.g., "Excited expression, text pops up").`;
+        systemInstruction = `【AVATAR PRESENTER MODE】\nYou are an expert scriptwriter for AI Avatar videos. Write a highly engaging, conversational script.\n'narration': Spoken language, fast-paced.\n'visual_cue': Keep it simple and focused on the avatar's performance (e.g., "Excited expression, pointing at the screen"). Do NOT write AI generative video prompts for this mode, as the visual is handled by a talking avatar engine.`;
     } else if (videoType === 'product') {
         let productContext = "Focus on the product details.";
         if (productDescription) productContext += `\n【CRITICAL: PRODUCT DETAILS】\nThe user explicitly stated: "${productDescription}". You MUST incorporate this into the 'visual_cue' whenever the product is shown.`;
-        systemInstruction = `【COMMERCIAL PRODUCT MODE】\nYou are an elite commercial director. ${productContext}\n'visual_cue': Explicitly describe the product in every scene. Add cinematic style keywords.`;
+        // 🚀 產品防變形運鏡鎖
+        systemInstruction = `【COMMERCIAL PRODUCT MODE】\nYou are an elite commercial director. ${productContext}\n'visual_cue': Explicitly describe the product in every scene. \n⚠️ CRITICAL ANTI-DISTORTION RULE: You MUST specify MINIMAL CAMERA MOVEMENT (e.g., 'Static shot', 'Subtle motion', 'Very slow zoom in'). ABSOLUTELY NO '360 pan', 'rotation', or complex dynamic moves, as this causes the AI video generator to deform the product.`;
     } else {
-        systemInstruction = `【VIRAL TOPIC MODE】\nYou are a viral Shorts creator.\n'visual_cue': Write prompts for AI B-roll generation matching the narration. Keep actions simple.`;
+        systemInstruction = `【VIRAL TOPIC MODE】\nYou are a viral Shorts creator.\n'visual_cue': Write prompts for AI B-roll generation matching the narration. Keep actions simple and highly visual.`;
     }
 
-    // 🚀 核心升級 1：嚴格限制幕數，強迫長鏡頭
+    // ⏱️ 長鏡頭與幕數限制
     const durationMap: Record<string, string> = {
         '10': '10 seconds MAX! STRICTLY 1 SCENE ONLY. Do NOT split into multiple scenes.',
         '15': '15 seconds MAX! MAXIMUM 2 SCENES.',
@@ -71,8 +94,11 @@ export class ScriptGenerator {
     let voiceoverRule = allowNoVoiceover ? `\n【OPTIONAL VOICEOVER】 If a scene does not need voiceover, leave the 'narration' field completely empty ("").` : `\n【MANDATORY VOICEOVER】 Every scene MUST have spoken 'narration'. Do not leave it empty.`;
     let formattingRule = `\n【CRITICAL FORMATTING RULE】 NEVER use brackets like 【】, [], (), or <> in the 'visual_cue' or 'narration'. Write ONLY in plain text.`;
     
-    // 🚀 核心升級 2：光影環境鎖定 (Visual Anchor)
-    let visualAnchorRule = `\n【CRITICAL VISUAL ANCHOR】 You MUST append this exact phrase to the very end of EVERY 'visual_cue': ", cinematic lighting, consistent color grading, 4k, hyperrealistic". This ensures AI generates a cohesive style across different angles.`;
+    // 🎨 環境光影錨點 (僅限非數字人模式)
+    let visualAnchorRule = "";
+    if (videoType === 'product' || videoType === 'topic') {
+        visualAnchorRule = `\n【CRITICAL VISUAL ANCHOR】 You MUST append this exact phrase to the very end of EVERY 'visual_cue': ", cinematic lighting, consistent color grading, 4k, hyperrealistic". This ensures AI generates a cohesive style across different scenes and angles.`;
+    }
 
     const prompt = `
       ${systemInstruction}
@@ -93,14 +119,49 @@ export class ScriptGenerator {
           {
             "id": 1,
             "narration": "The spoken text for this scene.",
-            "visual_cue": "Detailed instruction + the mandatory visual anchor phrase."
+            "visual_cue": "Detailed instruction ${videoType !== 'avatar' ? '+ the mandatory visual anchor phrase' : 'for the avatar behavior'}."
           }
         ],
         "socialMediaCopy": { "title": "SEO optimized title", "description": "Hashtags and description" }
       }
     `;
 
-    const response = await this.ai.models.generateContent({ model: 'gemini-2.5-pro', contents: prompt, config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, hook: { type: Type.STRING }, scenes: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: { type: Type.INTEGER }, narration: { type: Type.STRING }, visual_cue: { type: Type.STRING } }, required: ["id", "narration", "visual_cue"] } }, socialMediaCopy: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, description: { type: Type.STRING } }, required: ["title", "description"] } }, required: ["title", "hook", "scenes", "socialMediaCopy"] } } });
+    const response = await this.ai.models.generateContent({ 
+        model: 'gemini-2.5-pro', 
+        contents: prompt, 
+        config: { 
+            responseMimeType: "application/json", 
+            responseSchema: { 
+                type: Type.OBJECT, 
+                properties: { 
+                    title: { type: Type.STRING }, 
+                    hook: { type: Type.STRING }, 
+                    scenes: { 
+                        type: Type.ARRAY, 
+                        items: { 
+                            type: Type.OBJECT, 
+                            properties: { 
+                                id: { type: Type.INTEGER }, 
+                                narration: { type: Type.STRING }, 
+                                visual_cue: { type: Type.STRING } 
+                            }, 
+                            required: ["id", "narration", "visual_cue"] 
+                        } 
+                    }, 
+                    socialMediaCopy: { 
+                        type: Type.OBJECT, 
+                        properties: { 
+                            title: { type: Type.STRING }, 
+                            description: { type: Type.STRING } 
+                        }, 
+                        required: ["title", "description"] 
+                    } 
+                }, 
+                required: ["title", "hook", "scenes", "socialMediaCopy"] 
+            } 
+        } 
+    });
+    
     const resultText = response.text;
     if (!resultText) throw new Error("Failed to generate script");
     const data = JSON.parse(resultText.replace(/```json/g, '').replace(/```/g, '').trim());
