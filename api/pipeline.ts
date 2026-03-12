@@ -151,11 +151,21 @@ export default async function handler(req: any, res: any) {
             const status = String(rawStatus).toUpperCase();
             
             if (status === 'SUCCESS' || status === 'COMPLETED' || status === 'SUCCEEDED') {
-                // 🚀 嚴格模式：窮舉所有可能的網址欄位
                 let finalUrl = statusData.data?.video_url || statusData.data?.videoUrl || statusData.data?.url || statusData.data?.response?.video_url || statusData.data?.result?.video_url || statusData.video_url; 
                 if (!finalUrl && typeof statusData.data?.result === 'string' && statusData.data.result.startsWith('http')) finalUrl = statusData.data.result;
 
-                // 🚀 如果還是找不到網址，絕對不用黑畫面敷衍，直接把 JSON 攤給你看！
+                // 🚀 終極修復：解開 Kie.ai 隱藏的 resultJson 封印
+                if (!finalUrl && statusData.data?.resultJson) {
+                    try {
+                        const parsedResult = JSON.parse(statusData.data.resultJson);
+                        if (parsedResult.resultUrls && parsedResult.resultUrls.length > 0) {
+                            finalUrl = parsedResult.resultUrls[0];
+                        }
+                    } catch (parseError) {
+                        console.error("[Kling] resultJson 解析失敗:", parseError);
+                    }
+                }
+
                 if (!finalUrl) {
                     return res.status(200).json({ success: true, status: 'failed', error: `Kie.ai 顯示算圖成功，但 API 拒絕交出影片網址！原始資料: ${JSON.stringify(statusData)}` });
                 }
