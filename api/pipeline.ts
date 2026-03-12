@@ -22,12 +22,94 @@ export default async function handler(req: any, res: any) {
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
+      // 🚀 完整恢復且強化的「真實」健檢邏輯
       case 'test_config': {
         const { mptConfig } = req.body;
-        const logs: string[] = []; let allPass = true;
+        const logs: string[] = [];
+        let allPass = true;
+
         logs.push("🔍 [檢測開始] 正在驗證系統環境與 API 狀態...");
-        // (省略健檢程式碼以保持版面簡潔，維持上一版的邏輯)
-        return res.status(200).json({ success: true, allPass: true, logs: ["✅ 健檢完成，系統就緒！"] });
+
+        // 1. 影像引擎檢測
+        if (mptConfig.videoEngine === 'kling') {
+            if (!process.env.KIE_API_KEY) { logs.push("❌ Kling: 未設定 KIE_API_KEY 環境變數！"); allPass = false; }
+            else logs.push("✅ Kling: API Key 已設定。");
+        } else if (mptConfig.videoEngine === 'veo') {
+            if (!API_KEY) { logs.push("❌ Veo: 未設定 Google Gemini API Key！"); allPass = false; }
+            else logs.push("✅ Veo: API Key 已設定。");
+        } else if (mptConfig.videoEngine === 'heygen') {
+             if (!process.env.HEYGEN_API_KEY) { logs.push("❌ HeyGen: 未設定 HEYGEN_API_KEY！"); allPass = false; }
+             else if (!mptConfig.heygenAvatarId) { logs.push("❌ HeyGen: 未填寫 Avatar ID！"); allPass = false; }
+             else logs.push("✅ HeyGen: API Key 與 Avatar ID 已就緒。");
+        }
+
+        // 2. 配音引擎檢測 (精準戳 ElevenLabs API)
+        if (mptConfig.ttsEngine === 'elevenlabs') {
+            if (!process.env.ELEVENLABS_API_KEY) {
+                logs.push("❌ ElevenLabs: 未設定 ELEVENLABS_API_KEY 環境變數！"); allPass = false;
+            } else {
+                try {
+                    const cleanVoiceId = (mptConfig.voiceId || '').trim();
+                    if (!cleanVoiceId) {
+                        logs.push("❌ ElevenLabs: Voice ID 為空！"); allPass = false;
+                    } else {
+                        // 正式向 ElevenLabs 查詢此 Voice ID 資訊
+                        const ttsRes = await fetch(`https://api.elevenlabs.io/v1/voices/${cleanVoiceId}`, { 
+                            method: 'GET',
+                            headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY } 
+                        });
+                        
+                        if (ttsRes.ok) {
+                            const voiceData = await ttsRes.json();
+                            // 故意把配音員名字印出來，證明 API 真的通了！
+                            logs.push(`✅ ElevenLabs: 驗證成功！成功抓取配音員: 【${voiceData.name || '未知名稱'}】`);
+                        } else { 
+                            const errText = await ttsRes.text();
+                            logs.push(`❌ ElevenLabs: 驗證失敗 (HTTP ${ttsRes.status})`); 
+                            logs.push(`   可能原因: ID不存在、金鑰錯誤、或該聲音未加入您的 VoiceLab。`);
+                            logs.push(`   官方報錯: ${errText}`);
+                            allPass = false; 
+                        }
+                    }
+                } catch(e: any) { logs.push(`❌ ElevenLabs: 網路連線失敗 (${e.message})`); allPass = false; }
+            }
+        } else {
+            logs.push(`✅ Edge TTS: 免費配音已準備就緒 (${mptConfig.voiceId})。`);
+        }
+
+        // 3. 圖庫檢測
+        if (mptConfig.useStockFootage) {
+            if (!PEXELS_API_KEY) { logs.push("❌ Pexels: 混合模式需要圖庫，但未設定 PEXELS_API_KEY！"); allPass = false; }
+            else {
+                try {
+                    const pexRes = await fetch(`https://api.pexels.com/videos/search?query=nature&per_page=1`, { headers: { Authorization: PEXELS_API_KEY } });
+                    if (pexRes.ok) logs.push("✅ Pexels: 圖庫 API 驗證成功！");
+                    else { logs.push(`❌ Pexels: API Key 無效 (HTTP ${pexRes.status})`); allPass = false; }
+                } catch(e) { logs.push("❌ Pexels: 連線失敗！"); allPass = false; }
+            }
+        }
+
+        // 4. BGM 檢測
+        if (mptConfig.bgmMood !== 'none') {
+            if (!process.env.GOOGLE_DRIVE_API_KEY) {
+                logs.push("⚠️ BGM: 未設定 Google Drive API Key，將使用備用無版權音樂。");
+            } else {
+                try {
+                    const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files?q='1REsVuxpadReul7F5h4RzfbfWqYgdsd56'+in+parents&key=${process.env.GOOGLE_DRIVE_API_KEY}`);
+                    if (driveRes.ok) logs.push("✅ BGM: Google Drive 歌單連線成功！");
+                    else logs.push(`⚠️ BGM: Google Drive 存取失敗 (HTTP ${driveRes.status})，將使用備用音樂。`);
+                } catch(e) {
+                    logs.push("⚠️ BGM: Google Drive 連線失敗，將使用備用音樂。");
+                }
+            }
+        } else {
+            logs.push("✅ BGM: 目前設定為無配樂。");
+        }
+
+        if (allPass) logs.push("🎉 結論: 所有核心設定皆驗證通過，您可以安心渲染了！");
+        else logs.push("🚨 結論: 部分設定異常，請先修復亮紅燈的項目。");
+
+        return res.status(200).json({ success: true, allPass, logs });
       }
 
       case 'generate_video_submit': {
@@ -40,7 +122,6 @@ export default async function handler(req: any, res: any) {
             const KIE_API_KEY = process.env.KIE_API_KEY; if (!KIE_API_KEY) return res.status(500).json({ success: false, error: "缺少 KIE_API_KEY" });
             
             let imageUrlToUse = referenceImage;
-            // 由於前端已經將圖片清洗為 image/jpeg，這裡提取附檔名絕對安全
             if (referenceImage && typeof referenceImage === 'string' && referenceImage.startsWith('data:image')) { 
                 try { 
                     const base64Data = referenceImage.split(',')[1]; 
@@ -53,7 +134,6 @@ export default async function handler(req: any, res: any) {
             const selectedKlingModel = klingModelVersion || 'kling-3.0'; 
             let actualModelName = "kling-3.0/video"; 
             
-            // 🚀 核心修復：精準區分 image-to-video 與 text-to-video 通道
             if (selectedKlingModel === 'kling-3.0') {
                 actualModelName = imageUrlToUse ? "kling-3.0/image-to-video" : "kling-3.0/video";
             } else if (selectedKlingModel === 'kling-2.6-pro') {
@@ -66,7 +146,7 @@ export default async function handler(req: any, res: any) {
             
             if (imageUrlToUse) { 
                 kieInput.image_urls = [imageUrlToUse]; 
-                kieInput.image_url = imageUrlToUse; // 雙重保險，防止 Kie.ai API 規格變動
+                kieInput.image_url = imageUrlToUse; 
             } else { 
                 kieInput.aspect_ratio = "9:16"; 
             } 
