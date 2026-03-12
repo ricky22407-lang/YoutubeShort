@@ -53,7 +53,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       setScript(null); setTreatment(null); setSceneVideoCache({}); 
   };
 
-  // 🚀 核心升級：圖片漂白水 (自動將 webp/png 轉為相容性最高的白色背景 JPG)
+  // 🚀 核心升級：智慧前端壓縮引擎，徹底解決 413 Payload Too Large
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -61,18 +61,36 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
       reader.onloadend = () => {
           const img = new Image();
           img.onload = () => {
+              // 設定最大邊長為 1080px
+              const MAX_DIMENSION = 1080;
+              let width = img.width;
+              let height = img.height;
+
+              // 等比例縮小計算
+              if (width > height && width > MAX_DIMENSION) {
+                  height = Math.round((height * MAX_DIMENSION) / width);
+                  width = MAX_DIMENSION;
+              } else if (height > MAX_DIMENSION) {
+                  width = Math.round((width * MAX_DIMENSION) / height);
+                  height = MAX_DIMENSION;
+              }
+
               const canvas = document.createElement('canvas');
-              canvas.width = img.width;
-              canvas.height = img.height;
+              canvas.width = width;
+              canvas.height = height;
               const ctx = canvas.getContext('2d');
+              
               if (ctx) {
-                  // 填滿白底，防止 PNG 透明背景被 Kling 報錯
+                  // 填滿白底，防止 PNG 透明背景
                   ctx.fillStyle = '#FFFFFF';
-                  ctx.fillRect(0, 0, canvas.width, canvas.height);
-                  ctx.drawImage(img, 0, 0);
-                  const safeBase64 = canvas.toDataURL('image/jpeg', 0.95);
+                  ctx.fillRect(0, 0, width, height);
+                  // 繪製縮小後的圖片
+                  ctx.drawImage(img, 0, 0, width, height);
+                  
+                  // 以 80% 畫質輸出 JPG (大幅縮減體積，避免 413 錯誤)
+                  const safeBase64 = canvas.toDataURL('image/jpeg', 0.8);
                   setReferenceImages(prev => [...prev, safeBase64]);
-                  setLog(`✅ 圖片已成功轉換為純淨 JPG 格式並加入圖庫！(完美相容 Kling)`);
+                  setLog(`✅ 圖片已壓縮並轉換為純淨 JPG！(畫素: ${width}x${height})`);
               }
           };
           img.src = reader.result as string;
@@ -128,7 +146,27 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
 
     try {
       if (config.videoEngine === 'heygen' && config.heygenAvatarId) {
-          // heygen block omitted for brevity
+          let finalHeygenUrl = undefined;
+          setLog('正在提交 HeyGen 渲染任務...'); 
+          const submitRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_submit', channel: tempChannel, scriptData: script }) }).then(r => r.json());
+          if (!submitRes.success) throw new Error(submitRes.error || "提交失敗");
+          setLog('HeyGen 雲端算圖中 (預計 3~5 分鐘)...');
+          await new Promise(resolve => setTimeout(resolve, 180000)); 
+          while (true) {
+              const statusRes = await fetch('/api/pipeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stage: 'heygen_status', videoId: submitRes.videoId }) }).then(r => r.json());
+              if (statusRes.status === 'completed') { finalHeygenUrl = statusRes.videoUrl; break; } 
+              else if (statusRes.status === 'failed' || statusRes.status === 'error') { throw new Error("渲染失敗。"); }
+              await new Promise(resolve => setTimeout(resolve, 10000));
+          }
+          
+          setLog('正在合成最終影片與字幕...');
+          const res = await fetch('/api/pipeline', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stage: 'render_mpt', channel: tempChannel, scriptData: { ...script }, previousVideoUrl: videoUrl, preGeneratedHeygenUrl: finalHeygenUrl, preGeneratedSceneUrls: {}, videoType })
+          });
+          const data = await res.json();
+          if (data.success) { setVideoUrl(data.videoUrl); setLog("渲染完成！"); } else setLog("錯誤: " + data.error);
+          
       } else {
           setLog(`🎥 啟動分散式分鏡渲染架構 (已啟動 Xfade 電影級轉場)...`);
           let bakedChunks: string[] = [];
@@ -196,10 +234,6 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
     } catch (e: any) { setLog("錯誤: " + e.message); } finally { setLoading(false); }
   };
 
-  const publishVideo = async () => {
-      // omitted publish code for brevity...
-  };
-
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault(); if (!videoUrl) return;
     setLog("準備下載檔案...");
@@ -261,7 +295,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                           <span>📷 新增視角圖片</span>
                           <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
                       </label>
-                      <p className="text-[10px] text-zinc-500 mt-2">提示：上傳多張不同角度的產品圖，系統會自動轉換為相容格式。</p>
+                      <p className="text-[10px] text-zinc-500 mt-2">提示：上傳多張不同角度的產品圖，系統會自動壓縮並轉換為相容格式。</p>
                   </div>
                   
                   {referenceImages.length > 0 && (
@@ -365,7 +399,7 @@ export const MPTStudio: React.FC<MPTStudioProps> = ({ channel, onBack, isEmbedde
                 <div className="space-y-4 flex-1 overflow-y-auto pr-2 custom-scrollbar">
                     <div><label className="text-[10px] font-bold text-amber-500 uppercase block mb-1">核心切角</label><textarea value={treatment.coreAngle} onChange={e => setTreatment({...treatment, coreAngle: e.target.value})} className="w-full bg-black/50 border border-amber-900/50 p-3 rounded-lg text-sm text-amber-100 outline-none focus:border-amber-500 resize-none h-20" /></div>
                     <div><label className="text-[10px] font-bold text-pink-400 uppercase block mb-1">目標受眾情緒</label><input value={treatment.targetEmotion} onChange={e => setTreatment({...treatment, targetEmotion: e.target.value})} className="w-full bg-black/50 border border-pink-900/50 p-3 rounded-lg text-sm text-pink-100 outline-none focus:border-pink-500" /></div>
-                    <div><label className="text-[10px] font-bold text-emerald-400 uppercase block mb-1">視覺風格</label><textarea value={treatment.visualStyle} onChange={e => setTreatment({...treatment, visualStyle: e.target.value})} className="w-full bg-black/50 border border-emerald-900/50 p-3 rounded-lg text-sm text-emerald-100 outline-none focus:border-emerald-500 resize-none h-16" /></div>
+                    <div><label className="text-[10px] font-bold text-blue-400 uppercase block mb-1">視覺風格</label><textarea value={treatment.visualStyle} onChange={e => setTreatment({...treatment, visualStyle: e.target.value})} className="w-full bg-black/50 border border-emerald-900/50 p-3 rounded-lg text-sm text-emerald-100 outline-none focus:border-emerald-500 resize-none h-16" /></div>
                 </div>
                 <div className="pt-6 mt-4 border-t border-amber-900/30">
                     <button onClick={generateFinalScript} disabled={loading} className="w-full py-4 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl font-black shadow-lg shadow-orange-900/20 transition-all">
