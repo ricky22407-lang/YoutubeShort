@@ -37,9 +37,11 @@ export class VideoAssembler {
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     try {
         const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) throw new Error(`Failed to download: ${res.statusText}`);
+        if (!res.ok) throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
         fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-    } catch (e: any) { throw e; } finally { clearTimeout(timeoutId); }
+    } catch (e: any) { 
+        throw new Error(e instanceof Error ? e.message : String(e)); 
+    } finally { clearTimeout(timeoutId); }
   }
 
   private async fetchDynamicBgm(mood: string): Promise<string> {
@@ -57,8 +59,14 @@ export class VideoAssembler {
       return '';
   }
 
+  // 只有在系統一開始就判定「不需要 API 算圖」的情境 (例如 Mock)，才會呼叫這支程式
   private async generateAiVideoMock(outputPath: string): Promise<void> {
-      return new Promise((resolve, reject) => { ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5).output(outputPath).on('end', () => resolve()).on('error', reject).run(); });
+      return new Promise((resolve, reject) => { 
+          ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5).output(outputPath)
+          .on('end', () => resolve())
+          .on('error', (err) => reject(new Error(err instanceof Error ? err.message : String(err))))
+          .run(); 
+      });
   }
 
   async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
@@ -96,7 +104,11 @@ export class VideoAssembler {
               aFinal = '[a_mixed]';
           }
           filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg 失敗: ${err.message}`))).run();
+          
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename)
+          .on('end', () => resolve(outputFilename))
+          .on('error', (err, stdout, stderr) => reject(new Error(`FFmpeg: ${err instanceof Error ? err.message : String(err)} | Stderr: ${stderr}`)))
+          .run();
       });
   }
 
@@ -107,24 +119,43 @@ export class VideoAssembler {
           let videoPath = path.join(this.tempDir, `scene_${scene.id}.mp4`);
           const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
-          // 🚀 支援「無配音」場景：如果有字就配音，沒字就生 3 秒靜音檔避免崩潰
+          // 嚴格模式：配音失敗直接終止，絕不靜默產生無聲影片
           let audioDur = 0;
           if (cleanNarration.length > 0) {
-              if (!fs.existsSync(audioPath)) await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
+              if (!fs.existsSync(audioPath)) {
+                  await this.ttsService.generateAudio(cleanNarration, audioPath, settings.voiceId);
+              }
               audioDur = await this.getDuration(audioPath);
           } else {
+              // 這是使用者明確允許「無配音」時，才建立靜音音軌
               if (!fs.existsSync(audioPath)) {
-                  await new Promise<void>((resolve, reject) => { ffmpeg().input('anullsrc').inputFormat('lavfi').outputOptions(['-t 3']).audioCodec('libmp3lame').output(audioPath).on('end', resolve).on('error', reject).run(); });
+                  await new Promise<void>((resolve, reject) => { 
+                      ffmpeg().input('anullsrc').inputFormat('lavfi').outputOptions(['-t 3']).audioCodec('libmp3lame').output(audioPath)
+                      .on('end', resolve)
+                      .on('error', (err) => reject(new Error(`靜音音軌生成失敗: ${String(err)}`)))
+                      .run(); 
+                  });
               }
               audioDur = 3;
           }
 
+          // 🚀 嚴格模式：如果我們手上有從 Kie.ai 拿回來的真實網址，就死磕到底！
           if (!fs.existsSync(videoPath)) {
               if (preGeneratedSceneUrls && preGeneratedSceneUrls[scene.id] && preGeneratedSceneUrls[scene.id] !== 'mock') {
-                  await this.downloadFile(preGeneratedSceneUrls[scene.id], videoPath);
-              } else { await this.generateAiVideoMock(videoPath); }
+                  const targetUrl = preGeneratedSceneUrls[scene.id];
+                  try {
+                      await this.downloadFile(targetUrl, videoPath);
+                  } catch (e: any) {
+                      // ❌ 拔除遮羞布：下載失敗不再用黑畫面填補，直接把真實的錯誤與網址丟給使用者！
+                      throw new Error(`第 ${scene.id} 幕 Kling 影片下載失敗！\n錯誤原因: ${e.message}\n被阻擋的影片網址: ${targetUrl}`);
+                  }
+              } else { 
+                  // 只有在系統判定本來就沒有要算圖時，才產生 Mock 畫面
+                  await this.generateAiVideoMock(videoPath); 
+              }
           }
-          sceneAssets.push({ video: videoPath, audio: audioPath, duration: Math.max(audioDur, 2.5), text: cleanNarration });
+          
+          sceneAssets.push({ video: videoPath, audio: audioPath, duration: Math.max(audioDur || 3, 2.5), text: cleanNarration });
       }
 
       const assPath = this.generateSubtitles(sceneAssets, settings);
@@ -158,7 +189,10 @@ export class VideoAssembler {
           }
 
           filterComplex.push(`[v_concat]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg 組裝失敗: ${err.message}`))).run();
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename)
+          .on('end', () => resolve(outputFilename))
+          .on('error', (err, stdout, stderr) => reject(new Error(`FFmpeg: ${err instanceof Error ? err.message : String(err)} | Stderr: ${stderr}`)))
+          .run();
       });
   }
 
@@ -179,8 +213,6 @@ export class VideoAssembler {
           currentTime += asset.duration;
       }
       const fontMap: Record<string, string> = { 'NotoSansTC-Bold.ttf': 'Noto Sans TC', 'NotoSerifTC-Bold.ttf': 'Noto Serif TC', 'ZCOOLKuaiLe-Regular.ttf': 'ZCOOL KuaiLe', 'Roboto-Bold.ttf': 'Roboto', 'Anton-Regular.ttf': 'Anton', 'Bangers-Regular.ttf': 'Bangers' };
-      
-      // 🚀 字幕解析度大修正：對齊影片實際的 720x1280，並將 MarginV 設為 150，確保不會飛到螢幕外！
       const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,${fontMap[settings.fontName] || 'Noto Sans TC'},${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
       fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
       return assPath;
