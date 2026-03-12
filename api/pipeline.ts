@@ -27,7 +27,78 @@ export default async function handler(req: any, res: any) {
     const ai = new GoogleGenAI({ apiKey: API_KEY });
 
     switch (stage) {
-      case 'heygen_submit': { /* ... existing heygen ... */ 
+      // 🚀 新增功能：系統健康檢查與 API 探測
+      case 'test_config': {
+        const { mptConfig } = req.body;
+        const logs: string[] = [];
+        let allPass = true;
+
+        logs.push("🔍 [檢測開始] 正在驗證系統環境與 API 狀態...");
+
+        // 1. 影像引擎檢測
+        if (mptConfig.videoEngine === 'kling') {
+            if (!process.env.KIE_API_KEY) { logs.push("❌ Kling: 未設定 KIE_API_KEY 環境變數！"); allPass = false; }
+            else logs.push("✅ Kling: API Key 已設定。");
+        } else if (mptConfig.videoEngine === 'veo') {
+            if (!API_KEY) { logs.push("❌ Veo: 未設定 Google Gemini API Key！"); allPass = false; }
+            else logs.push("✅ Veo: API Key 已設定。");
+        } else if (mptConfig.videoEngine === 'heygen') {
+             if (!process.env.HEYGEN_API_KEY) { logs.push("❌ HeyGen: 未設定 HEYGEN_API_KEY！"); allPass = false; }
+             else if (!mptConfig.heygenAvatarId) { logs.push("❌ HeyGen: 未填寫 Avatar ID！"); allPass = false; }
+             else logs.push("✅ HeyGen: API Key 與 Avatar ID 已就緒。");
+        }
+
+        // 2. 配音引擎檢測 (精準測試 ElevenLabs Voice ID)
+        if (mptConfig.ttsEngine === 'elevenlabs') {
+            if (!process.env.ELEVENLABS_API_KEY) {
+                logs.push("❌ ElevenLabs: 未設定 ELEVENLABS_API_KEY 環境變數！"); allPass = false;
+            } else {
+                try {
+                    const ttsRes = await fetch(`https://api.elevenlabs.io/v1/voices/${mptConfig.voiceId}`, { headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY } });
+                    if (ttsRes.ok) logs.push(`✅ ElevenLabs: Voice ID (${mptConfig.voiceId}) 驗證成功！`);
+                    else { logs.push(`❌ ElevenLabs: Voice ID 無效或額度耗盡 (HTTP ${ttsRes.status})`); allPass = false; }
+                } catch(e) { logs.push(`❌ ElevenLabs: API 連線失敗！`); allPass = false; }
+            }
+        } else {
+            logs.push(`✅ Edge TTS: 免費配音已準備就緒 (${mptConfig.voiceId})。`);
+        }
+
+        // 3. 圖庫檢測
+        if (mptConfig.useStockFootage) {
+            if (!PEXELS_API_KEY) { logs.push("❌ Pexels: 混合模式需要圖庫，但未設定 PEXELS_API_KEY！"); allPass = false; }
+            else {
+                try {
+                    const pexRes = await fetch(`https://api.pexels.com/videos/search?query=nature&per_page=1`, { headers: { Authorization: PEXELS_API_KEY } });
+                    if (pexRes.ok) logs.push("✅ Pexels: 圖庫 API 驗證成功！");
+                    else { logs.push(`❌ Pexels: API Key 無效 (HTTP ${pexRes.status})`); allPass = false; }
+                } catch(e) { logs.push("❌ Pexels: 連線失敗！"); allPass = false; }
+            }
+        }
+
+        // 4. BGM 檢測
+        if (mptConfig.bgmMood !== 'none') {
+            if (!process.env.GOOGLE_DRIVE_API_KEY) {
+                logs.push("⚠️ BGM: 未設定 Google Drive API Key，系統將降級使用備用無版權音樂。");
+            } else {
+                try {
+                    const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files?q='1REsVuxpadReul7F5h4RzfbfWqYgdsd56'+in+parents&key=${process.env.GOOGLE_DRIVE_API_KEY}`);
+                    if (driveRes.ok) logs.push("✅ BGM: Google Drive 歌單連線成功！");
+                    else logs.push(`⚠️ BGM: Google Drive 存取失敗 (HTTP ${driveRes.status})，將降級使用備用音樂。`);
+                } catch(e) {
+                    logs.push("⚠️ BGM: Google Drive 連線失敗，將降級使用備用音樂。");
+                }
+            }
+        } else {
+            logs.push("✅ BGM: 目前設定為無配樂。");
+        }
+
+        if (allPass) logs.push("🎉 結論: 所有核心設定皆驗證通過，您可以安心渲染了！");
+        else logs.push("🚨 結論: 部分設定異常，強烈建議修正後再開始渲染，以免浪費點數。");
+
+        return res.status(200).json({ success: true, allPass, logs });
+      }
+
+      case 'heygen_submit': { 
         const heyGen = new HeyGenService(); const fullText = scriptData.scenes.map((s: any) => s.narration).join(' '); let voiceId = channel.mptConfig?.voiceId || 'zh-TW-HsiaoChenNeural'; if (channel.mptConfig?.ttsEngine === 'elevenlabs' && channel.mptConfig?.elevenLabsVoiceId) voiceId = channel.mptConfig.elevenLabsVoiceId; const heygenIdInput = (channel.mptConfig?.heygenAvatarId || '').trim(); let finalAvatarIds: string[] = []; if (!heygenIdInput) return res.status(200).json({ success: false, error: '未提供 HeyGen Avatar ID' }); if (heygenIdInput.includes(',')) finalAvatarIds = heygenIdInput.split(',').map((id: string) => id.trim()).filter((id: string) => id.length > 0); else { const groupLooks = await heyGen.getAvatarGroupLooks(heygenIdInput); if (groupLooks.length > 0) finalAvatarIds = groupLooks; else finalAvatarIds = [heygenIdInput]; } const selectedAvatarId = finalAvatarIds[Math.floor(Math.random() * finalAvatarIds.length)]; const scale = channel.mptConfig?.avatarScale || 1.0; const videoId = await heyGen.submitVideoTask(fullText, selectedAvatarId, voiceId, scale); return res.status(200).json({ success: true, videoId });
       }
       case 'heygen_status': { const heyGen = new HeyGenService(); const result = await heyGen.checkVideoStatus(req.body.videoId); return res.status(200).json({ success: true, status: result.status, videoUrl: result.url }); }
@@ -73,7 +144,6 @@ export default async function handler(req: any, res: any) {
       case 'generate_treatment': { const generator = new ScriptGenerator(API_KEY); const treatment = await generator.generateTreatment(req.body.topic || channel.niche, channel.language || 'zh-TW', req.body.videoType || 'topic', req.body.productDescription, req.body.targetDuration, req.body.allowNoVoiceover); return res.status(200).json({ success: true, treatment }); }
       case 'generate_script': { const generator = new ScriptGenerator(API_KEY); const script = await generator.generate(req.body.topic || channel.niche, channel.language || 'zh-TW', req.body.referenceImage, req.body.productDescription, req.body.videoType || 'topic', req.body.treatment, req.body.targetDuration, req.body.allowNoVoiceover); return res.status(200).json({ success: true, script }); }
 
-      // 🌟 新增的路由：專門用來處理單幕 (不超過 10 秒即完成)
       case 'render_scene_chunk': {
           const { scene, videoUrl, mptConfig } = req.body;
           const assembler = new VideoAssembler(API_KEY, PEXELS_API_KEY!);
@@ -84,7 +154,6 @@ export default async function handler(req: any, res: any) {
           return res.status(200).json({ success: true, chunkUrl: blob.url });
       }
 
-      // 🌟 新增的路由：專門用來瞬間合併 (不重新編碼，不到 5 秒完成)
       case 'stitch_final': {
           const { chunkUrls, mptConfig, previousVideoUrl } = req.body;
           const assembler = new VideoAssembler(API_KEY, PEXELS_API_KEY!);
@@ -96,7 +165,6 @@ export default async function handler(req: any, res: any) {
           return res.status(200).json({ success: true, videoUrl: blob.url });
       }
 
-      // (保留給 HeyGen 數字人模式使用)
       case 'render_mpt': {
           const assembler = new VideoAssembler(API_KEY, PEXELS_API_KEY!);
           const outputPath = path.join(os.tmpdir(), `mpt_${Date.now()}.mp4`);
