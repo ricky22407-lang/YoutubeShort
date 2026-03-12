@@ -66,7 +66,7 @@ export class VideoAssembler {
                   }
               }
           }
-      } catch (error) { console.warn("[BGM] Google Drive 抓取失敗"); } 
+      } catch (error) {} 
       return 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3';
   }
 
@@ -75,7 +75,7 @@ export class VideoAssembler {
   }
 
   async assemble(videoType: string, script: ScriptData, outputFilename: string, config?: any, preGeneratedHeygenUrl?: string, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
-      const commonSettings = { bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf', voiceId: config?.voiceId || 'zh-TW-HsiaoChenNeural', bgmMood: config?.bgmMood || 'none' };
+      const commonSettings = { bgmVolume: config?.bgmVolume ?? 0.1, fontSize: config?.fontSize ?? 60, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf', voiceId: config?.voiceId || 'zh-TW-HsiaoChenNeural', bgmMood: config?.bgmMood || 'none' };
       return this.assembleAvatarPipeline(script, outputFilename, commonSettings, preGeneratedHeygenUrl);
   }
 
@@ -104,7 +104,9 @@ export class VideoAssembler {
 
       const targetDur = Math.max(audioDur, 2.5);
       const sceneAssets = [{ video: videoPath, audio: audioPath, duration: targetDur, text: cleanNarration }];
-      const subSettings = { fontSize: config?.fontSize ?? 80, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
+      
+      // 縮小預設字體至 60，避免過度擁擠
+      const subSettings = { fontSize: config?.fontSize ?? 60, subtitleColor: config?.subtitleColor || '#FFFF00', fontName: config?.fontName || 'NotoSansTC-Bold.ttf' };
       
       const assPath = this.generateSubtitles(sceneAssets, subSettings);
       const { fontsDirEscaped, assPathEscaped } = await this.setupFonts(assPath, subSettings.fontName);
@@ -114,7 +116,8 @@ export class VideoAssembler {
               .input(videoPath)
               .input(audioPath)
               .complexFilter([
-                  `[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
+                  // 🚀 核心修復 1：改回 pad (Letterbox) 保護畫面，不再強行裁切！
+                  `[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,tpad=stop_mode=clone:stop_duration=15,trim=duration=${targetDur.toFixed(3)},setpts=PTS-STARTPTS[v]`,
                   `[v]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_sub]`
               ])
               .outputOptions([
@@ -129,13 +132,10 @@ export class VideoAssembler {
       });
   }
 
-  // 🚀 核心升級 3：電影級轉場引擎 (Xfade & Acrossfade)
   async stitchFinal(chunkUrls: string[], config: any, outputPath: string): Promise<string> {
-      console.log(`[StitchFinal] 準備縫合 ${chunkUrls.length} 個片段，使用轉場引擎...`);
       const localPaths: string[] = [];
       const durations: number[] = [];
 
-      // 下載所有片段並取得精準時長
       await Promise.all(chunkUrls.map(async (url, i) => {
           const p = path.join(this.tempDir, `chunk_${i}.mp4`);
           await this.downloadFile(url, p);
@@ -155,7 +155,6 @@ export class VideoAssembler {
           localPaths.forEach(p => cmd.input(p));
           if (bgmPath) cmd.input(bgmPath);
 
-          // 如果只有一支影片，直接複製或加 BGM 即可，不需轉場
           if (localPaths.length === 1) {
               if (bgmPath) {
                   cmd.complexFilter([
@@ -170,7 +169,6 @@ export class VideoAssembler {
               return;
           }
 
-          // 🌟 產生 xfade 與 acrossfade 濾鏡鏈
           const transitionDuration = 0.5;
           let filterComplex = '';
           let currentOffset = 0;
@@ -187,17 +185,15 @@ export class VideoAssembler {
               lastA = nextA;
           }
 
-          // BGM 混音處理
           let finalAudio = `[${lastA}]`;
           if (bgmPath) {
-              const bgmIndex = localPaths.length; // BGM 會是最後一個 input
+              const bgmIndex = localPaths.length; 
               filterComplex += `[${bgmIndex}:a]aloop=loop=-1:size=2e+09[bgm_loop];`;
               filterComplex += `[bgm_loop]volume=${bgmVolume}[bgm_low];`;
               filterComplex += `[${lastA}][bgm_low]amix=inputs=2:duration=shortest:dropout_transition=2[a_out]`;
               finalAudio = '[a_out]';
           }
 
-          // 因為用了轉場濾鏡，影片必須重新壓製，我們使用 ultrafast 保證極速過關
           cmd.complexFilter(filterComplex)
              .outputOptions([
                  `-map [${lastV}]`, `-map ${finalAudio}`,
@@ -211,7 +207,6 @@ export class VideoAssembler {
       });
   }
 
-  // (Avatar Pipeline 維持原樣)
   private async assembleAvatarPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedHeygenUrl?: string): Promise<string> {
       if (!preGeneratedHeygenUrl) throw new Error("未收到預先生成的 HeyGen 影片網址！");
       const singleVideoPath = path.join(this.tempDir, `heygen_full.mp4`);
@@ -237,7 +232,7 @@ export class VideoAssembler {
               filterComplex.push(`[1:a]aloop=loop=-1:size=2e+09[bgm_loop]`, `[bgm_loop]volume=${settings.bgmVolume}[bgm_low]`, `[bgm_low][0:a]amix=inputs=2:duration=shortest:dropout_transition=2[a_mixed]`);
               aFinal = '[a_mixed]';
           }
-          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
+          filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename).on('end', () => resolve(outputFilename)).on('error', (err) => reject(new Error(`FFmpeg: ${err.message}`))).run();
       });
   }
@@ -251,15 +246,28 @@ export class VideoAssembler {
       for (const asset of sceneAssets) {
           const durationMs = Math.round(asset.duration * 100), words = asset.text.split(''); 
           let karaokeText = '';
+          let charCount = 0;
+          
           if (words.length > 0) {
               const charDuration = Math.floor(durationMs / Math.max(words.length, 1));
-              words.forEach((w: string) => { karaokeText += `{\\k${charDuration}}${w}`; });
+              words.forEach((w: string) => { 
+                  karaokeText += `{\\k${charDuration}}${w}`; 
+                  charCount++;
+                  // 🚀 核心修復 2：智慧換行系統，每 12~16 個字強制換行，徹底解決字幕超框！
+                  if (charCount >= 12 && /[，。！？、,.\s]/.test(w)) {
+                      karaokeText += '\\N';
+                      charCount = 0;
+                  } else if (charCount >= 16) {
+                      karaokeText += '\\N';
+                      charCount = 0;
+                  }
+              });
           }
           assEvents += `Dialogue: 0,${formatAssTime(currentTime)},${formatAssTime(currentTime + asset.duration)},Default,,0,0,0,,${karaokeText}\n`;
           currentTime += asset.duration;
       }
       
-      const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,20,20,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+      const assHeader = `[Script Info]\nScriptType: v4.00+\nPlayResX: 720\nPlayResY: 1280\nWrapStyle: 1\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Noto Sans CJK TC,${settings.fontSize},${hexToASS(settings.subtitleColor)},&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,0,2,40,40,150,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
       fs.writeFileSync(assPath, '\uFEFF' + assHeader + assEvents, 'utf8');
       return assPath;
   }
