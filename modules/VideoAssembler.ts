@@ -32,16 +32,24 @@ export class VideoAssembler {
     });
   }
 
-  private async downloadFile(url: string, dest: string, timeoutMs: number = 60000): Promise<void> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        const res = await fetch(url, { signal: controller.signal });
-        if (!res.ok) throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
-        fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
-    } catch (e: any) { 
-        throw new Error(e instanceof Error ? e.message : String(e)); 
-    } finally { clearTimeout(timeoutId); }
+  // 🚀 升級 1：加入 3 次重試與 20 秒極限超時，防禦 CDN 瞬斷
+  private async downloadFile(url: string, dest: string, timeoutMs: number = 20000, retries: number = 3): Promise<void> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, { signal: controller.signal });
+            if (!res.ok) throw new Error(`HTTP Error ${res.status}: ${res.statusText}`);
+            fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+            clearTimeout(timeoutId);
+            return; // 成功就跳出迴圈
+        } catch (e: any) {
+            clearTimeout(timeoutId);
+            console.warn(`[Download] 失敗，正在重試 (${attempt}/${retries}): ${url}`);
+            if (attempt === retries) throw new Error(`下載失敗 (已重試 3 次): ${e instanceof Error ? e.message : String(e)}`);
+            await new Promise(r => setTimeout(r, 1000)); // 失敗等一秒再試
+        }
+    }
   }
 
   private async fetchDynamicBgm(mood: string): Promise<string> {
@@ -59,7 +67,6 @@ export class VideoAssembler {
       return '';
   }
 
-  // 只有在系統一開始就判定「不需要 API 算圖」的情境 (例如 Mock)，才會呼叫這支程式
   private async generateAiVideoMock(outputPath: string): Promise<void> {
       return new Promise((resolve, reject) => { 
           ffmpeg().input('color=c=black:s=720x1280').inputFormat('lavfi').duration(5).output(outputPath)
@@ -105,21 +112,23 @@ export class VideoAssembler {
           }
           filterComplex.push(`[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=30,format=yuv420p,ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
           
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename)
+          // 🚀 升級 2：加上 ultrafast 參數，強制縮減運算時間
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest']).output(outputFilename)
           .on('end', () => resolve(outputFilename))
-          .on('error', (err, stdout, stderr) => reject(new Error(`FFmpeg: ${err instanceof Error ? err.message : String(err)} | Stderr: ${stderr}`)))
+          .on('error', (err, stdout, stderr) => reject(new Error(`FFmpeg: ${err instanceof Error ? err.message : String(err)}`)))
           .run();
       });
   }
 
   private async assembleSceneBasedPipeline(script: ScriptData, outputFilename: string, settings: any, preGeneratedSceneUrls?: Record<number, string>): Promise<string> {
-      const sceneAssets: any[] = [];
-      for (const scene of script.scenes) {
+      const sceneAssets: any[] = new Array(script.scenes.length);
+
+      // 🚀 升級 3：將原本「排隊慢慢下載」改為「全部同時平行下載 (Promise.all)」
+      const downloadPromises = script.scenes.map(async (scene, index) => {
           const audioPath = path.join(this.tempDir, `scene_${scene.id}.mp3`);
-          let videoPath = path.join(this.tempDir, `scene_${scene.id}.mp4`);
+          const videoPath = path.join(this.tempDir, `scene_${scene.id}.mp4`);
           const cleanNarration = scene.narration.replace(/[\n\r]+/g, ' ').trim();
 
-          // 嚴格模式：配音失敗直接終止，絕不靜默產生無聲影片
           let audioDur = 0;
           if (cleanNarration.length > 0) {
               if (!fs.existsSync(audioPath)) {
@@ -127,39 +136,38 @@ export class VideoAssembler {
               }
               audioDur = await this.getDuration(audioPath);
           } else {
-              // 這是使用者明確允許「無配音」時，才建立靜音音軌
               if (!fs.existsSync(audioPath)) {
                   await new Promise<void>((resolve, reject) => { 
                       ffmpeg().input('anullsrc').inputFormat('lavfi').outputOptions(['-t 3']).audioCodec('libmp3lame').output(audioPath)
-                      .on('end', resolve)
-                      .on('error', (err) => reject(new Error(`靜音音軌生成失敗: ${String(err)}`)))
-                      .run(); 
+                      .on('end', resolve).on('error', reject).run(); 
                   });
               }
               audioDur = 3;
           }
 
-          // 🚀 嚴格模式：如果我們手上有從 Kie.ai 拿回來的真實網址，就死磕到底！
           if (!fs.existsSync(videoPath)) {
               if (preGeneratedSceneUrls && preGeneratedSceneUrls[scene.id] && preGeneratedSceneUrls[scene.id] !== 'mock') {
                   const targetUrl = preGeneratedSceneUrls[scene.id];
                   try {
                       await this.downloadFile(targetUrl, videoPath);
                   } catch (e: any) {
-                      // ❌ 拔除遮羞布：下載失敗不再用黑畫面填補，直接把真實的錯誤與網址丟給使用者！
-                      throw new Error(`第 ${scene.id} 幕 Kling 影片下載失敗！\n錯誤原因: ${e.message}\n被阻擋的影片網址: ${targetUrl}`);
+                      throw new Error(`第 ${scene.id} 幕影片下載超時或失敗！\n錯誤原因: ${e.message}`);
                   }
               } else { 
-                  // 只有在系統判定本來就沒有要算圖時，才產生 Mock 畫面
                   await this.generateAiVideoMock(videoPath); 
               }
           }
           
-          sceneAssets.push({ video: videoPath, audio: audioPath, duration: Math.max(audioDur || 3, 2.5), text: cleanNarration });
-      }
+          sceneAssets[index] = { video: videoPath, audio: audioPath, duration: Math.max(audioDur || 3, 2.5), text: cleanNarration };
+      });
+
+      const bgmPromise = this.prepareBGM(settings.bgmMood);
+
+      // 讓所有影片、配音、BGM 齊頭並進，同時在 3~5 秒內載完！
+      await Promise.all([...downloadPromises, bgmPromise]);
+      const bgmPath = await bgmPromise;
 
       const assPath = this.generateSubtitles(sceneAssets, settings);
-      const bgmPath = await this.prepareBGM(settings.bgmMood);
 
       return new Promise((resolve, reject) => {
           const { fontsDirEscaped, assPathEscaped } = this.setupFonts(assPath, settings.fontName);
@@ -189,9 +197,11 @@ export class VideoAssembler {
           }
 
           filterComplex.push(`[v_concat]ass=${assPathEscaped}:fontsdir=${fontsDirEscaped}[v_out]`);
-          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-pix_fmt yuv420p', '-c:a aac', '-shortest']).output(outputFilename)
+          
+          // 🚀 升級 2：加上 ultrafast 參數，強制縮減運算時間
+          cmd.complexFilter(filterComplex).outputOptions([`-map [v_out]`, `-map ${aFinal}`, '-c:v libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest']).output(outputFilename)
           .on('end', () => resolve(outputFilename))
-          .on('error', (err, stdout, stderr) => reject(new Error(`FFmpeg: ${err instanceof Error ? err.message : String(err)} | Stderr: ${stderr}`)))
+          .on('error', (err, stdout, stderr) => reject(new Error(`FFmpeg: ${err instanceof Error ? err.message : String(err)}`)))
           .run();
       });
   }
